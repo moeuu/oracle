@@ -143,6 +143,34 @@ async function clickArchivePoint(
   });
 }
 
+export function buildTrustedArchiveMenuPointExpressionForTest(
+  conversationUrl?: string | null,
+): string {
+  const conversationLiteral = JSON.stringify(conversationUrl ?? "");
+  return `(() => {
+    const current = new URL(${conversationLiteral} || location.href, location.href);
+    const link = Array.from(document.querySelectorAll('a[href]')).find((element) => {
+      try {
+        const url = new URL(element.getAttribute('href') ?? '', location.href);
+        return url.origin === current.origin && url.pathname === current.pathname;
+      } catch { return false; }
+    });
+    const row = link?.closest('div.group[aria-label]');
+    if (link && (!row || row.querySelectorAll('a[href*="/c/"]').length !== 1)) return null;
+    let button = row?.querySelector('button[aria-label="Chat actions"]') ?? null;
+    if (link && !button) return null;
+    if (!link) {
+      button = Array.from(document.querySelectorAll('button[aria-label="More"]'))
+        .find((element) => element.getBoundingClientRect().top < 180) ?? null;
+    }
+    if (!(button instanceof HTMLElement)) return null;
+    button.scrollIntoView({ block: 'center' });
+    const rect = button.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return null;
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`;
+}
+
 async function archiveWithTrustedInput(
   Runtime: ChromeClient["Runtime"],
   Input: ChromeClient["Input"],
@@ -156,27 +184,7 @@ async function archiveWithTrustedInput(
   const conversationLiteral = JSON.stringify(conversationUrl ?? "");
   const menuPoint = await readArchiveClickPoint(
     Runtime,
-    `(() => {
-      const current = new URL(${conversationLiteral} || location.href, location.href);
-      const link = Array.from(document.querySelectorAll('a[href]')).find((element) => {
-        try {
-          const url = new URL(element.getAttribute('href') ?? '', location.href);
-          return url.origin === current.origin && url.pathname === current.pathname;
-        } catch { return false; }
-      });
-      let button = null;
-      for (let ancestor = link?.parentElement; ancestor; ancestor = ancestor.parentElement) {
-        button = ancestor.querySelector('button[aria-label="Chat actions"]');
-        if (button) break;
-      }
-      button ??= Array.from(document.querySelectorAll('button[aria-label="More"]'))
-        .find((element) => element.getBoundingClientRect().top < 180);
-      if (!(button instanceof HTMLElement)) return null;
-      button.scrollIntoView({ block: 'center' });
-      const rect = button.getBoundingClientRect();
-      if (rect.width <= 0 || rect.height <= 0) return null;
-      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-    })()`,
+    buildTrustedArchiveMenuPointExpressionForTest(conversationUrl),
   );
   if (!menuPoint) {
     return { status: "skipped", reason: "conversation-menu-not-found", conversationUrl };
@@ -349,14 +357,15 @@ function buildArchiveConversationExpression(): string {
 	      // Recent ChatGPT layouts put Archive in the current chat's sidebar menu,
 	      // while the header's More menu only contains actions such as Pin.
 	      const currentLink = findCurrentConversationLink();
-	      for (let ancestor = currentLink?.parentElement; ancestor; ancestor = ancestor.parentElement) {
-	        const sidebarButton = ancestor.querySelector('button[aria-label="Chat actions"]');
-	        if (sidebarButton instanceof HTMLElement) {
-	          sidebarConversationLinkFound = true;
-	          sidebarButton.scrollIntoView({ block: 'center' });
-	          return sidebarButton;
-	        }
+	      const row = currentLink?.closest('div.group[aria-label]');
+	      if (currentLink && (!row || row.querySelectorAll('a[href*="/c/"]').length !== 1)) return null;
+	      const sidebarButton = row?.querySelector('button[aria-label="Chat actions"]');
+	      if (sidebarButton instanceof HTMLElement) {
+	        sidebarConversationLinkFound = true;
+	        sidebarButton.scrollIntoView({ block: 'center' });
+	        return sidebarButton;
 	      }
+	      if (currentLink) return null;
 	      const buttons = Array.from(document.querySelectorAll('button,[role="button"]'))
         .filter((element) => element instanceof HTMLElement && isVisible(element));
       const labelled = buttons

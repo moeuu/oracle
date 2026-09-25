@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   archiveChatGptConversation,
   buildArchiveConversationExpressionForTest,
+  buildTrustedArchiveMenuPointExpressionForTest,
   isProjectChatgptUrl,
   isTemporaryChatgptUrl,
   resolveBrowserArchiveDecision,
@@ -96,6 +97,39 @@ describe("browser conversation archive policy", () => {
 });
 
 describe("archiveChatGptConversation", () => {
+  test("never chooses another chat menu when the current row has no actions button", () => {
+    class FakeElement {
+      getBoundingClientRect() {
+        return { left: 40, top: 20, width: 20, height: 20 };
+      }
+      scrollIntoView() {}
+    }
+    const otherChatButton = new FakeElement();
+    const row = {
+      querySelectorAll: () => [currentLink],
+      querySelector: () => null,
+    };
+    const currentLink = {
+      getAttribute: () => "/c/current",
+      closest: () => row,
+    };
+    const document = {
+      querySelectorAll: (selector: string) =>
+        selector === "a[href]" ? [currentLink] : [otherChatButton],
+    };
+    const expression = buildTrustedArchiveMenuPointExpressionForTest(
+      "https://chatgpt.com/c/current",
+    );
+    const point = Function(
+      "document",
+      "location",
+      "HTMLElement",
+      "URL",
+      `return ${expression};`,
+    )(document, { href: "https://chatgpt.com/c/current" }, FakeElement, URL);
+    expect(point).toBeNull();
+  });
+
   test("returns archived result when the DOM action succeeds", async () => {
     const runtime = {
       evaluate: vi.fn().mockResolvedValue({
