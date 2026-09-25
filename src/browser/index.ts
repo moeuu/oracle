@@ -448,6 +448,8 @@ export function formatBrowserTurnTranscript(turns: BrowserConversationTurn[]): {
 
 async function maybeArchiveCompletedConversation({
   Runtime,
+  Input,
+  Page,
   logger,
   config,
   conversationUrl,
@@ -455,6 +457,8 @@ async function maybeArchiveCompletedConversation({
   requiredArtifactsSaved,
 }: {
   Runtime: ChromeClient["Runtime"];
+  Input?: ChromeClient["Input"];
+  Page?: ChromeClient["Page"];
   logger: BrowserLogger;
   config: ResolvedBrowserConfig;
   conversationUrl?: string | null;
@@ -491,6 +495,8 @@ async function maybeArchiveCompletedConversation({
   return archiveChatGptConversation(Runtime, logger, {
     mode: decision.mode,
     conversationUrl,
+    input: Input,
+    page: Page,
   }).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     logger(`[browser] ChatGPT archive failed (${message}).`);
@@ -1804,6 +1810,8 @@ async function runBrowserModeInternal(
       );
       const archive = await maybeArchiveCompletedConversation({
         Runtime,
+        Input,
+        Page,
         logger,
         config,
         conversationUrl: lastUrl,
@@ -2337,6 +2345,8 @@ async function runBrowserModeInternal(
     const savedArtifacts = appendArtifacts(browserArtifactsWithCapture, [transcriptArtifact]);
     const archive = await maybeArchiveCompletedConversation({
       Runtime,
+      Input,
+      Page,
       logger,
       config,
       conversationUrl: lastUrl,
@@ -3366,6 +3376,8 @@ async function runRemoteBrowserMode(
       );
       const archive = await maybeArchiveCompletedConversation({
         Runtime,
+        Input,
+        Page,
         logger,
         config,
         conversationUrl: lastUrl,
@@ -3848,6 +3860,8 @@ async function runRemoteBrowserMode(
     const savedArtifacts = appendArtifacts(browserArtifactsWithCapture, [transcriptArtifact]);
     const archive = await maybeArchiveCompletedConversation({
       Runtime,
+      Input,
+      Page,
       logger,
       config,
       conversationUrl: lastUrl,

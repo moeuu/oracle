@@ -68,17 +68,26 @@ export async function archiveChatGptConversation(
   {
     mode,
     conversationUrl,
+    input,
+    page,
   }: {
     mode: BrowserArchiveMode;
     conversationUrl?: string | null;
+    input?: ChromeClient["Input"];
+    page?: ChromeClient["Page"];
   },
 ): Promise<BrowserArchiveResult> {
-  const evaluated = await Runtime.evaluate({
-    expression: buildArchiveConversationExpression(),
-    awaitPromise: true,
-    returnByValue: true,
-  });
-  const value = evaluated.result?.value as
+  const value = (
+    input?.dispatchMouseEvent
+      ? await archiveWithTrustedInput(Runtime, input, page, conversationUrl)
+      : (
+          await Runtime.evaluate({
+            expression: buildArchiveConversationExpression(),
+            awaitPromise: true,
+            returnByValue: true,
+          })
+        ).result?.value
+  ) as
     | { status: "archived"; conversationUrl?: string | null }
     | { status: "skipped"; reason: string; conversationUrl?: string | null }
     | { status: "failed"; error: string; conversationUrl?: string | null }
@@ -99,6 +108,173 @@ export async function archiveChatGptConversation(
     conversationUrl: resolvedUrl,
     error,
   };
+}
+
+interface ArchiveClickPoint {
+  x: number;
+  y: number;
+}
+
+async function readArchiveClickPoint(
+  Runtime: ChromeClient["Runtime"],
+  expression: string,
+): Promise<ArchiveClickPoint | null> {
+  const evaluated = await Runtime.evaluate({ expression, returnByValue: true });
+  const value = evaluated.result?.value as ArchiveClickPoint | null | undefined;
+  return value && Number.isFinite(value.x) && Number.isFinite(value.y) ? value : null;
+}
+
+async function clickArchivePoint(
+  Input: ChromeClient["Input"],
+  point: ArchiveClickPoint,
+): Promise<void> {
+  await Input.dispatchMouseEvent({ type: "mouseMoved", ...point });
+  await Input.dispatchMouseEvent({
+    type: "mousePressed",
+    ...point,
+    button: "left",
+    clickCount: 1,
+  });
+  await Input.dispatchMouseEvent({
+    type: "mouseReleased",
+    ...point,
+    button: "left",
+    clickCount: 1,
+  });
+}
+
+async function archiveWithTrustedInput(
+  Runtime: ChromeClient["Runtime"],
+  Input: ChromeClient["Input"],
+  Page: ChromeClient["Page"] | undefined,
+  conversationUrl?: string | null,
+): Promise<
+  | { status: "archived"; conversationUrl?: string | null }
+  | { status: "skipped"; reason: string; conversationUrl?: string | null }
+> {
+  await Page?.bringToFront?.();
+  const conversationLiteral = JSON.stringify(conversationUrl ?? "");
+  const menuPoint = await readArchiveClickPoint(
+    Runtime,
+    `(() => {
+      const current = new URL(${conversationLiteral} || location.href, location.href);
+      const link = Array.from(document.querySelectorAll('a[href]')).find((element) => {
+        try {
+          const url = new URL(element.getAttribute('href') ?? '', location.href);
+          return url.origin === current.origin && url.pathname === current.pathname;
+        } catch { return false; }
+      });
+      let button = null;
+      for (let ancestor = link?.parentElement; ancestor; ancestor = ancestor.parentElement) {
+        button = ancestor.querySelector('button[aria-label="Chat actions"]');
+        if (button) break;
+      }
+      button ??= Array.from(document.querySelectorAll('button[aria-label="More"]'))
+        .find((element) => element.getBoundingClientRect().top < 180);
+      if (!(button instanceof HTMLElement)) return null;
+      button.scrollIntoView({ block: 'center' });
+      const rect = button.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) return null;
+      return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+    })()`,
+  );
+  if (!menuPoint) {
+    return { status: "skipped", reason: "conversation-menu-not-found", conversationUrl };
+  }
+  const resourceBaseline = await Runtime.evaluate({
+    expression: `performance.getEntriesByType('resource').filter((entry) =>
+      entry.name.includes('/backend-api/conversation/') &&
+      entry.name.includes(new URL(${conversationLiteral} || location.href).pathname.split('/').at(-1))
+    ).length`,
+    returnByValue: true,
+  });
+  const baselineCount = Number(resourceBaseline.result?.value) || 0;
+  await clickArchivePoint(Input, menuPoint);
+  let archivePoint: ArchiveClickPoint | null = null;
+  for (let i = 0; i < 12 && !archivePoint; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    archivePoint = await readArchiveClickPoint(
+      Runtime,
+      `(() => {
+        const roots = Array.from(document.querySelectorAll('[role="menu"]'));
+        const items = roots.flatMap((root) => Array.from(root.querySelectorAll('[role="menuitem"],button')));
+        const item = items.find((element) => {
+          const label = (element.innerText || element.getAttribute('aria-label') || '').trim().toLowerCase();
+          return !/unarchive|restore|アーカイブを解除/.test(label) &&
+            /archive|archiwizuj|アーカイブ/.test(label);
+        });
+        if (!(item instanceof HTMLElement)) return null;
+        const rect = item.getBoundingClientRect();
+        if (rect.width <= 0 || rect.height <= 0) return null;
+        return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+      })()`,
+    );
+  }
+  if (!archivePoint) {
+    return { status: "skipped", reason: "archive-menu-item-not-found", conversationUrl };
+  }
+  await clickArchivePoint(Input, archivePoint);
+  const deadline = Date.now() + 6_000;
+  while (Date.now() < deadline) {
+    const result = await Runtime.evaluate({
+      expression: `(() => {
+        const current = new URL(${conversationLiteral} || location.href, location.href);
+        const sidebarLinkPresent = Array.from(document.querySelectorAll('a[href]')).some((element) => {
+          try {
+            const url = new URL(element.getAttribute('href') ?? '', location.href);
+            return url.origin === current.origin && url.pathname === current.pathname;
+          } catch { return false; }
+        });
+        const resources = performance.getEntriesByType('resource').filter((entry) =>
+          entry.name.includes('/backend-api/conversation/') &&
+          entry.name.includes(current.pathname.split('/').at(-1))
+        ).slice(${baselineCount});
+        return { sidebarLinkPresent, saved: resources.some((entry) =>
+          entry.responseStatus >= 200 && entry.responseStatus < 300
+        ) };
+      })()`,
+      returnByValue: true,
+    });
+    const state = result.result?.value as
+      | { sidebarLinkPresent?: boolean; saved?: boolean }
+      | undefined;
+    if (state?.saved && state.sidebarLinkPresent === false) {
+      // The sidebar removes a chat optimistically. Reload before claiming the
+      // backend kept the archive; a 200 PATCH alone is not durable proof.
+      if (!Page?.reload) {
+        return { status: "skipped", reason: "archive-readback-unavailable", conversationUrl };
+      }
+      await Page.reload({ ignoreCache: true });
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
+      const readback = await Runtime.evaluate({
+        expression: `(() => {
+            const current = new URL(${conversationLiteral} || location.href, location.href);
+            const links = Array.from(document.querySelectorAll('a[href]'));
+            const recentCount = links.filter((element) => {
+              try { return new URL(element.getAttribute('href') ?? '', location.href).pathname.startsWith('/c/'); }
+              catch { return false; }
+            }).length;
+            const currentPresent = links.some((element) => {
+              try {
+                const url = new URL(element.getAttribute('href') ?? '', location.href);
+                return url.origin === current.origin && url.pathname === current.pathname;
+              } catch { return false; }
+            });
+            return { recentCount, currentPresent };
+          })()`,
+        returnByValue: true,
+      }).catch(() => null);
+      const fresh = readback?.result?.value as
+        | { recentCount?: number; currentPresent?: boolean }
+        | undefined;
+      if ((fresh?.recentCount ?? 0) >= 3 && fresh?.currentPresent === false) {
+        return { status: "archived", conversationUrl };
+      }
+      return { status: "skipped", reason: "archive-readback-pending", conversationUrl };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150));
+  }
+  return { status: "skipped", reason: "archive-not-confirmed", conversationUrl };
 }
 
 export function buildArchiveConversationExpressionForTest(): string {
