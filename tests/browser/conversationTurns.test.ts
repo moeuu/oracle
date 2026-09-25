@@ -7,6 +7,7 @@ import {
   CONVERSATION_TURN_CONTAINER_SELECTOR,
   CONVERSATION_TURN_SELECTOR,
 } from "../../src/browser/constants.js";
+import { FakeDocument, FakeElement } from "./domFixture.js";
 
 function evaluate(expression: string, responses: Map<string, unknown[]>): unknown {
   const document = {
@@ -16,6 +17,18 @@ function evaluate(expression: string, responses: Map<string, unknown[]>): unknow
 }
 
 describe("conversation turn expressions", () => {
+  test("counts the current ChatGPT user turn after an attachment send", () => {
+    const userTurn = new FakeElement(
+      "div",
+      { "data-content-search-unit-key": "fallback-turn-0:0:user" },
+      [new FakeElement("div", { "data-user-message-bubble": "true" }, [], "Sent prompt")],
+    );
+    const document = new FakeDocument([userTurn]);
+    expect(
+      Function("document", `return ${buildConversationTurnCountExpression()};`)(document),
+    ).toBe(1);
+  });
+
   test("prefers top-level turn containers over nested broad-selector matches", () => {
     const containers = [{ id: "user" }, { id: "assistant" }];
     const nestedMatches = [...containers, { id: "nested-assistant" }];
