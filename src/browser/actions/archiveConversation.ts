@@ -158,8 +158,30 @@ function buildArchiveConversationExpression(): string {
 	      element.dispatchEvent(new MouseEvent('mouseup', { ...eventInit, buttons: 0 }));
 	      element.dispatchEvent(new MouseEvent('click', { ...eventInit, buttons: 0 }));
 	    };
+    const currentUrl = new URL(conversationUrl ?? location.href, location.href);
+    const findCurrentConversationLink = () =>
+      Array.from(document.querySelectorAll('a[href]')).find((element) => {
+        try {
+          const url = new URL(element.getAttribute('href') ?? '', location.href);
+          return url.origin === currentUrl.origin && url.pathname === currentUrl.pathname;
+        } catch {
+          return false;
+        }
+      });
+    let sidebarConversationLinkFound = false;
     const findConversationMenuButton = () => {
-      const buttons = Array.from(document.querySelectorAll('button,[role="button"]'))
+	      // Recent ChatGPT layouts put Archive in the current chat's sidebar menu,
+	      // while the header's More menu only contains actions such as Pin.
+	      const currentLink = findCurrentConversationLink();
+	      for (let ancestor = currentLink?.parentElement; ancestor; ancestor = ancestor.parentElement) {
+	        const sidebarButton = ancestor.querySelector('button[aria-label="Chat actions"]');
+	        if (sidebarButton instanceof HTMLElement) {
+	          sidebarConversationLinkFound = true;
+	          sidebarButton.scrollIntoView({ block: 'center' });
+	          return sidebarButton;
+	        }
+	      }
+	      const buttons = Array.from(document.querySelectorAll('button,[role="button"]'))
         .filter((element) => element instanceof HTMLElement && isVisible(element));
       const labelled = buttons
         .map((element) => ({ element, label: labelFor(element), rect: element.getBoundingClientRect() }))
@@ -256,6 +278,7 @@ function buildArchiveConversationExpression(): string {
 	      while (Date.now() < deadline) {
 	        if (conversationUrl && location.href !== conversationUrl) return true;
 	        if (hasArchiveConfirmation()) return true;
+	        if (sidebarConversationLinkFound && !findCurrentConversationLink()) return true;
 	        await sleep(150);
 	      }
 	      return false;
