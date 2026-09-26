@@ -333,6 +333,9 @@ function buildAssistantDownloadableFilesExpression(minTurnIndex?: number): strin
     const ASSISTANT_SELECTOR = ${assistantLiteral};
     const isAssistantTurn = (node) => {
       if (!(node instanceof HTMLElement)) return false;
+      const searchKey = (node.getAttribute('data-content-search-unit-key') || node.getAttribute('data-chatgpt-search-unit-key') || '').toLowerCase();
+      if (searchKey.endsWith(':user')) return false;
+      if (searchKey.endsWith(':assistant')) return true;
       const turnAttr = (node.getAttribute('data-turn') || node.dataset?.turn || '').toLowerCase();
       if (turnAttr === 'assistant') return true;
       const role = (node.getAttribute('data-message-author-role') || node.dataset?.messageAuthorRole || '').toLowerCase();
@@ -413,12 +416,18 @@ function buildAssistantDownloadableFilesExpression(minTurnIndex?: number): strin
       const values = collectValues(node);
       const downloadUrl = values.find(isChatGptDownloadUrl) || '';
       const sandboxUrl = values.find(isSandboxUrl) || '';
-      if (!downloadUrl && !sandboxUrl) return null;
+      const downloadLabel = (node.getAttribute('aria-label') || '').trim();
+      const labelFilename = /^Download\\s+(.+\\.[a-z0-9]{1,10})$/i.exec(downloadLabel)?.[1]?.trim() || '';
+      const safeLabelFilename =
+        labelFilename && labelFilename.length <= 255 &&
+        !labelFilename.includes('/') && !labelFilename.includes('\\\\') &&
+        labelFilename !== '.' && labelFilename !== '..';
+      if (!downloadUrl && !sandboxUrl && !safeLabelFilename) return null;
       const label = (node.textContent || node.getAttribute('aria-label') || node.getAttribute('title') || '').trim();
       const downloadAttr = String(node.tagName || '').toLowerCase() === 'a' ? node.getAttribute('download') || '' : '';
-      const filename = downloadAttr || basename(sandboxUrl) || basename(downloadUrl) || label || '';
+      const filename = downloadAttr || basename(sandboxUrl) || basename(downloadUrl) || labelFilename || label || '';
       return {
-        url: downloadUrl || sandboxUrl || values.find(hrefKind) || '',
+        url: downloadUrl || sandboxUrl || values.find(hrefKind) || 'browser-download',
         downloadUrl,
         sandboxUrl,
         filename,
@@ -468,11 +477,15 @@ export async function readAssistantDownloadableFiles(
     const sandboxUrl = normalizeSandboxUrl(
       typeof item?.sandboxUrl === "string" ? item.sandboxUrl : item?.url,
     );
-    if (!downloadUrl && !sandboxUrl) {
+    const browserDownload = item?.url === "browser-download" &&
+      typeof item?.filename === "string" &&
+      item.filename.length > 0 && item.filename.length <= 255 &&
+      !/[\\/]/.test(item.filename);
+    if (!downloadUrl && !sandboxUrl && !browserDownload) {
       continue;
     }
     normalized.push({
-      url: downloadUrl ?? sandboxUrl ?? "",
+      url: downloadUrl ?? sandboxUrl ?? "browser-download",
       downloadUrl,
       sandboxUrl,
       filename: typeof item?.filename === "string" ? item.filename : undefined,
@@ -747,6 +760,9 @@ function buildClickAssistantDownloadButtonsExpression(
     const CLICKED_ATTRIBUTE = 'data-oracle-download-clicked';
     const isAssistantTurn = (node) => {
       if (!(node instanceof HTMLElement)) return false;
+      const searchKey = (node.getAttribute('data-content-search-unit-key') || node.getAttribute('data-chatgpt-search-unit-key') || '').toLowerCase();
+      if (searchKey.endsWith(':user')) return false;
+      if (searchKey.endsWith(':assistant')) return true;
       const turnAttr = (node.getAttribute('data-turn') || node.dataset?.turn || '').toLowerCase();
       if (turnAttr === 'assistant') return true;
       const role = (node.getAttribute('data-message-author-role') || node.dataset?.messageAuthorRole || '').toLowerCase();

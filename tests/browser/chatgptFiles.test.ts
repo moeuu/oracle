@@ -123,6 +123,51 @@ describe("readAssistantDownloadableFiles", () => {
       filename: "source.tar.gz",
     });
   });
+
+  test("discovers current assistant download buttons without a link and ignores user uploads", async () => {
+    class SearchUnit {
+      tagName: string;
+      textContent: string;
+      className = "";
+      children: SearchUnit[];
+      private attrs: Record<string, string>;
+      constructor(tagName: string, attrs: Record<string, string> = {}, children: SearchUnit[] = []) {
+        this.tagName = tagName;
+        this.textContent = "";
+        this.attrs = attrs;
+        this.children = children;
+      }
+      get attributes() {
+        return Object.values(this.attrs).map((value) => ({ value }));
+      }
+      getAttribute(name: string) {
+        return this.attrs[name] ?? null;
+      }
+      querySelector() {
+        return null;
+      }
+      querySelectorAll() {
+        return this.children;
+      }
+    }
+    const user = new SearchUnit("DIV", { "data-content-search-unit-key": "turn:0:user" }, [
+      new SearchUnit("BUTTON", { "aria-label": "Download user-upload.zip" }),
+    ]);
+    const assistant = new SearchUnit("DIV", { "data-content-search-unit-key": "turn:1:assistant" }, [
+      new SearchUnit("BUTTON", { "aria-label": "Download report.zip" }),
+    ]);
+    const expression = __test__.buildAssistantDownloadableFilesExpression(1);
+    const value = Function("document", "HTMLElement", "location", `return ${expression};`)(
+      { querySelectorAll: () => [user, assistant] },
+      SearchUnit,
+      { origin: "https://chatgpt.com" },
+    );
+    const runtime = { evaluate: vi.fn().mockResolvedValue({ result: { value } }) } as unknown as ChromeClient["Runtime"];
+
+    expect(await readAssistantDownloadableFiles(runtime, 1)).toEqual([
+      expect.objectContaining({ url: "browser-download", filename: "report.zip" }),
+    ]);
+  });
 });
 
 describe("saveChatGptDownloadableFiles", () => {
