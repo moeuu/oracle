@@ -159,6 +159,20 @@ describe("copied-profile launch flags", () => {
     expect(options.chromeFlags).not.toContain("--password-store=basic");
     expect(options.chromeFlags).toContain("--remote-debugging-address=0.0.0.0");
   });
+
+  test("uses the native Keychain for a persistent macOS manual-login profile", async () => {
+    const { resolveChromeLaunchOptionsForTest } =
+      await import("../../src/browser/chromeLifecycle.js");
+    const flags = ["--use-mock-keychain", "--password-store=basic", "--no-first-run"];
+    const options = resolveChromeLaunchOptionsForTest(flags, false, true, "darwin");
+    expect(options.ignoreDefaultFlags).toBe(true);
+    expect(options.chromeFlags).not.toContain("--use-mock-keychain");
+    expect(options.chromeFlags).not.toContain("--password-store=basic");
+    expect(options.chromeFlags).toContain("--no-first-run");
+    expect(resolveChromeLaunchOptionsForTest(flags, false, true, "linux").ignoreDefaultFlags).toBe(
+      false,
+    );
+  });
 });
 
 describe("hidden-window launch flags", () => {

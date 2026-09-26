@@ -41,14 +41,17 @@ export async function launchChrome(
     debugBindAddress,
     config.hideWindow ?? false,
   );
-  // copy-profile reuses a copied signed-in profile whose cookies are
-  // Keychain-encrypted, so it must launch with the real Keychain (not mocked):
-  // strip the keychain-mocking flags from both chrome-launcher's defaults and
-  // Oracle's set, and ignore the defaults so they aren't re-added.
+  // Copied profiles and persistent macOS manual-login profiles must use the
+  // real Keychain so their ChatGPT cookies survive a Chrome or Mac restart.
+  // Remove the mock-keychain flags from both launcher's defaults and our set.
   if (usingCopiedProfile && config.chromeProfile) {
     chromeFlags.push(`--profile-directory=${config.chromeProfile}`);
   }
-  const launchOptions = resolveChromeLaunchOptions(chromeFlags, usingCopiedProfile);
+  const launchOptions = resolveChromeLaunchOptions(
+    chromeFlags,
+    usingCopiedProfile,
+    config.manualLogin === true,
+  );
   const launcher = usePatchedLauncher
     ? await launchWithCustomHost({
         chromeFlags: launchOptions.chromeFlags,
@@ -1204,8 +1207,10 @@ export function buildChromeFlagsForTest(
 function resolveChromeLaunchOptions(
   chromeFlags: string[],
   usingCopiedProfile: boolean,
+  manualLogin = false,
+  platform: NodeJS.Platform = process.platform,
 ): { chromeFlags: string[]; ignoreDefaultFlags: boolean } {
-  if (!usingCopiedProfile) {
+  if (!usingCopiedProfile && !(manualLogin && platform === "darwin")) {
     return { chromeFlags, ignoreDefaultFlags: false };
   }
   return {
@@ -1219,8 +1224,10 @@ function resolveChromeLaunchOptions(
 export function resolveChromeLaunchOptionsForTest(
   chromeFlags: string[],
   usingCopiedProfile: boolean,
+  manualLogin = false,
+  platform: NodeJS.Platform = process.platform,
 ): { chromeFlags: string[]; ignoreDefaultFlags: boolean } {
-  return resolveChromeLaunchOptions(chromeFlags, usingCopiedProfile);
+  return resolveChromeLaunchOptions(chromeFlags, usingCopiedProfile, manualLogin, platform);
 }
 
 function parseDebugPortEnv(): number | null {
