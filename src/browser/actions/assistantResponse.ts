@@ -1288,6 +1288,7 @@ function buildAssistantExtractor(functionName: string): string {
         messageRoot.querySelector('[data-testid*="message"]') ||
         messageRoot.querySelector('[data-testid*="assistant"]') ||
         messageRoot.querySelector('.prose') ||
+        messageRoot.querySelector('[class*="MarkdownRoot"]') ||
         messageRoot.querySelector('[class*="markdown"]');
       const contentRoot = preferred ?? messageRoot;
       if (!contentRoot) {
@@ -1348,7 +1349,7 @@ function buildMarkdownFallbackExtractor(minTurnLiteral?: string): string {
       document.querySelector('[role="main"]'),
     ].filter(Boolean);
     if (roots.length === 0) return null;
-    const markdownSelector = '.markdown,[data-message-content],[data-testid*="message"],.prose,[class*="markdown"]';
+    const markdownSelector = '.markdown,[data-message-content],[data-testid*="message"],.prose,[class*="MarkdownRoot"],[class*="markdown"]';
     const isExcluded = (node) =>
       Boolean(
         node?.closest?.(
@@ -1415,6 +1416,12 @@ function buildMarkdownFallbackExtractor(minTurnLiteral?: string): string {
       });
     if (markdowns.length === 0) return null;
     const actionButtons = Array.from(root.querySelectorAll('${FINISHED_ACTIONS_SELECTOR}'));
+    // ChatGPT's current Pro layout can omit the per-turn action bar. Its live
+    // completion announcement is positive evidence once the sampled answer is
+    // after the current user turn; an empty/working announcement is not.
+    const responseComplete = Array.from(
+      document.querySelectorAll('[role="status"][aria-live="polite"]'),
+    ).some((status) => (status.textContent || '').trim() === 'Response complete');
     const actionMarkdowns = [];
     for (const button of actionButtons) {
       const container =
@@ -1451,7 +1458,7 @@ function buildMarkdownFallbackExtractor(minTurnLiteral?: string): string {
         root.querySelector('[data-message-author-role="assistant"], [data-turn="assistant"], [data-testid*="assistant"]'),
     );
     const allowMarkdownFallback = hasAssistantIndicators || hasTurns || Boolean(userText);
-    const candidates =
+    const rawCandidates =
       actionMarkdowns.length > 0
         ? actionMarkdowns
         : assistantMarkdowns.length > 0
@@ -1459,6 +1466,13 @@ function buildMarkdownFallbackExtractor(minTurnLiteral?: string): string {
           : allowMarkdownFallback
             ? markdowns
             : [];
+    // Inline citation/code spans also have "markdown" in their class name.
+    // Prefer the complete message root, otherwise the last inline span can be
+    // mistaken for the full assistant answer (including during artifact saves).
+    const blockCandidates = rawCandidates.filter((node) =>
+      node.matches?.('.markdown,.prose,[data-message-content],[class*="MarkdownRoot"]'),
+    );
+    const candidates = blockCandidates.length > 0 ? blockCandidates : rawCandidates;
     for (let i = candidates.length - 1; i >= 0; i -= 1) {
       const node = candidates[i];
       if (!node) continue;
@@ -1474,7 +1488,7 @@ function buildMarkdownFallbackExtractor(minTurnLiteral?: string): string {
         messageId: null,
         turnId: null,
         turnIndex,
-        completionVisible: actionMarkdowns.includes(node),
+        completionVisible: actionMarkdowns.includes(node) || (responseComplete && isAfterCurrentUser(node)),
       };
     }
     return null;
