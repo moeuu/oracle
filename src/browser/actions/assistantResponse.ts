@@ -20,6 +20,7 @@ import {
   buildConversationDebugExpression,
 } from "../domDebug.js";
 import { buildClickDispatcher } from "./domEvents.js";
+import { buildReadCompletionAnnouncementExpression } from "./completionAnnouncement.js";
 import { BrowserAutomationError } from "../../oracle/errors.js";
 
 const ASSISTANT_POLL_TIMEOUT_ERROR = "assistant-response-watchdog-timeout";
@@ -54,6 +55,26 @@ export interface TerminalGateState {
   lastChangeAt: number;
   barStableCycles: number;
   seen: boolean;
+}
+
+export interface CompletionAnnouncementGateState {
+  turnKey: string | null;
+  sawIncomplete: boolean;
+}
+
+export function advanceCompletionAnnouncementGate(
+  state: CompletionAnnouncementGateState,
+  turnKey: string | null,
+  statusComplete: boolean,
+): { state: CompletionAnnouncementGateState; accept: boolean } {
+  if (!turnKey) return { state: { turnKey: null, sawIncomplete: false }, accept: false };
+  const sameTurn = state.turnKey === turnKey;
+  return {
+    state: { turnKey, sawIncomplete: !statusComplete || (sameTurn && state.sawIncomplete) },
+    // A page-wide announcement is useful only after it changed from incomplete
+    // to complete while the sampled assistant turn was already present.
+    accept: statusComplete && sameTurn && state.sawIncomplete,
+  };
 }
 
 export interface TerminalSample {
@@ -698,6 +719,10 @@ async function pollAssistantCompletion(
 } | null> {
   const watchdogDeadline = Date.now() + timeoutMs;
   let gate = createTerminalGateState(Date.now());
+  let announcementGate: CompletionAnnouncementGateState = {
+    turnKey: null,
+    sawIncomplete: false,
+  };
   while (Date.now() < watchdogDeadline) {
     // Check abort signal to stop polling when another path won the race
     if (abortSignal?.aborted) {
@@ -710,9 +735,28 @@ async function pollAssistantCompletion(
       if (isGeneratedImageAssistantAnswer(normalized)) {
         return normalized;
       }
+      const turnIndex = typeof snapshot?.turnIndex === "number" ? snapshot.turnIndex : null;
+      const turnKey =
+        typeof minTurnIndex === "number" && turnIndex !== null && turnIndex >= minTurnIndex
+          ? `${turnIndex}:${normalized.meta.messageId ?? normalized.meta.turnId ?? ""}`
+          : null;
+      const statusComplete = await readPageResponseCompleteStatus(Runtime);
+      const announcement = advanceCompletionAnnouncementGate(
+        announcementGate,
+        turnKey,
+        statusComplete,
+      );
+      announcementGate = announcement.state;
+      const trackedComplete =
+        turnIndex !== null && (await readTrackedCompletionAnnouncement(Runtime, turnIndex));
       const [stopVisible, barVisible, thinkingActivity] = await Promise.all([
         isStopButtonVisible(Runtime),
-        isCompletionVisible(Runtime, normalized.meta, minTurnIndex),
+        isCompletionVisible(
+          Runtime,
+          normalized.meta,
+          minTurnIndex,
+          trackedComplete || announcement.accept,
+        ),
         readThinkingActivity(Runtime),
       ]);
       const decision = classifyTurnTerminal(
@@ -785,6 +829,7 @@ export const buildStopButtonVisibilityExpressionForTest = buildStopButtonVisibil
 function buildCompletionVisibilityExpression(
   meta: { turnId?: string | null; messageId?: string | null },
   minTurnIndex?: number,
+  allowPageStatus = false,
 ): string {
   const expectedMessageId = meta.messageId ? JSON.stringify(meta.messageId) : "null";
   const expectedTurnId = meta.turnId ? JSON.stringify(meta.turnId) : "null";
@@ -842,10 +887,7 @@ function buildCompletionVisibilityExpression(
       return false;
     }
 
-    const responseComplete = Array.from(
-      document.querySelectorAll('[role="status"][aria-live="polite"]'),
-    ).some((status) => (status.textContent || '').trim() === 'Response complete');
-    if (responseComplete) return true;
+    if (${allowPageStatus}) return true;
     if (lastAssistantTurn.querySelector('${FINISHED_ACTIONS_SELECTOR}')) return true;
     const markdowns = lastAssistantTurn.querySelectorAll('.markdown');
     return Array.from(markdowns).some((node) => (node.textContent || '').trim() === 'Done');
@@ -860,14 +902,42 @@ async function isCompletionVisible(
     completionVisible?: boolean;
   },
   minTurnIndex?: number,
+  allowPageStatus = false,
 ): Promise<boolean> {
   if (hasScopedCompletionProof(meta)) return true;
   try {
     const { result } = await Runtime.evaluate({
-      expression: buildCompletionVisibilityExpression(meta, minTurnIndex),
+      expression: buildCompletionVisibilityExpression(meta, minTurnIndex, allowPageStatus),
       returnByValue: true,
     });
     return Boolean(result?.value);
+  } catch {
+    return false;
+  }
+}
+
+async function readPageResponseCompleteStatus(Runtime: ChromeClient["Runtime"]): Promise<boolean> {
+  try {
+    const { result } = await Runtime.evaluate({
+      expression: `Array.from(document.querySelectorAll('[role="status"][aria-live="polite"]')).some((status) => (status.textContent || '').trim() === 'Response complete')`,
+      returnByValue: true,
+    });
+    return result?.value === true;
+  } catch {
+    return false;
+  }
+}
+
+async function readTrackedCompletionAnnouncement(
+  Runtime: ChromeClient["Runtime"],
+  turnIndex: number,
+): Promise<boolean> {
+  try {
+    const { result } = await Runtime.evaluate({
+      expression: buildReadCompletionAnnouncementExpression(turnIndex),
+      returnByValue: true,
+    });
+    return result?.value === true;
   } catch {
     return false;
   }
@@ -1438,9 +1508,6 @@ function buildMarkdownFallbackExtractor(minTurnLiteral?: string): string {
     // ChatGPT's current Pro layout can omit the per-turn action bar. Its live
     // completion announcement is positive evidence once the sampled answer is
     // after the current user turn; an empty/working announcement is not.
-    const responseComplete = Array.from(
-      document.querySelectorAll('[role="status"][aria-live="polite"]'),
-    ).some((status) => (status.textContent || '').trim() === 'Response complete');
     const actionMarkdowns = [];
     for (const button of actionButtons) {
       const container =
@@ -1507,7 +1574,7 @@ function buildMarkdownFallbackExtractor(minTurnLiteral?: string): string {
         messageId: null,
         turnId: null,
         turnIndex,
-        completionVisible: actionMarkdowns.includes(node) || (responseComplete && isAfterCurrentUser(node)),
+        completionVisible: actionMarkdowns.includes(node),
       };
     }
     return null;

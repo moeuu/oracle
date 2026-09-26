@@ -1,6 +1,7 @@
 import { createContext, Script } from "node:vm";
 import { describe, expect, test } from "vitest";
 import {
+  advanceCompletionAnnouncementGate,
   buildActiveThinkingStatusPredicateJsForTest,
   buildAnswerNowPlaceholderPredicateJs,
   buildAssistantSnapshotExpressionForTest,
@@ -209,10 +210,12 @@ describe("completion action correlation", () => {
     minTurnIndex?: number;
     turns: FakeTurn[];
     completionStatus?: string;
+    allowPageStatus?: boolean;
   }): boolean {
     const expression = buildCompletionVisibilityExpressionForTest(
       { messageId: args.messageId },
       args.minTurnIndex,
+      args.allowPageStatus,
     );
     const context = createContext({
       Array,
@@ -256,6 +259,7 @@ describe("completion action correlation", () => {
         minTurnIndex: 1,
         turns: [userTurn, currentTurn],
         completionStatus: "Response complete",
+        allowPageStatus: true,
       }),
     ).toBe(true);
     expect(
@@ -263,8 +267,32 @@ describe("completion action correlation", () => {
         minTurnIndex: 2,
         turns: [userTurn, currentTurn],
         completionStatus: "Response complete",
+        allowPageStatus: true,
       }),
     ).toBe(false);
+  });
+
+  test("rejects a stale page-wide completion announcement for a new turn", () => {
+    const userTurn = new FakeTurn({ "data-turn": "user" }, false);
+    const currentTurn = new FakeTurn({ "data-turn": "assistant" }, false);
+    expect(
+      evaluateCompletionVisibility({
+        minTurnIndex: 1,
+        turns: [userTurn, currentTurn],
+        completionStatus: "Response complete",
+      }),
+    ).toBe(false);
+
+    let gate = { turnKey: null as string | null, sawIncomplete: false };
+    const stale = advanceCompletionAnnouncementGate(gate, "1:current", true);
+    expect(stale.accept).toBe(false);
+    gate = stale.state;
+    const working = advanceCompletionAnnouncementGate(gate, "1:current", false);
+    expect(working.accept).toBe(false);
+    gate = working.state;
+    const complete = advanceCompletionAnnouncementGate(gate, "1:current", true);
+    expect(complete.accept).toBe(true);
+    expect(advanceCompletionAnnouncementGate(complete.state, "2:next", true).accept).toBe(false);
   });
 
   test("rejects controls whose assistant identity differs from the sample", () => {
@@ -332,7 +360,7 @@ describe("completion action correlation", () => {
     expect(snapshot).toMatchObject({
       text: "Completed answer",
       turnIndex: 1,
-      completionVisible: true,
+      completionVisible: false,
     });
   });
 });

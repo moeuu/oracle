@@ -27,6 +27,7 @@ import { stageAttachmentPrompt } from "./attachmentPrompt.js";
 import { BrowserAutomationError } from "../../oracle/errors.js";
 import { buildAttachmentEvidenceExpression } from "./attachmentEvidence.js";
 import { buildAttachmentProgressExpression } from "./attachmentProgress.js";
+import { buildInstallCompletionAnnouncementExpression } from "./completionAnnouncement.js";
 import { activateWebSearch } from "./webSearch.js";
 
 const ENTER_KEY_EVENT = {
@@ -254,6 +255,14 @@ export async function submitPrompt(
   }
 
   if (deps.webSearch) await activateWebSearch(runtime, input, prompt, logger);
+
+  // Install before the click: a short answer can complete while commit verification runs.
+  await runtime
+    .evaluate({
+      expression: buildInstallCompletionAnnouncementExpression(deps.baselineTurns),
+      returnByValue: true,
+    })
+    .catch(() => undefined);
 
   const clicked = await attemptSendButton(
     runtime,
