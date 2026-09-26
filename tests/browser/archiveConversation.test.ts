@@ -2,6 +2,7 @@ import { describe, expect, test, vi } from "vitest";
 import {
   archiveChatGptConversation,
   buildArchiveConversationExpressionForTest,
+  buildTrustedArchiveConfirmationPointExpressionForTest,
   buildTrustedArchiveMenuPointExpressionForTest,
   isProjectChatgptUrl,
   isTemporaryChatgptUrl,
@@ -97,6 +98,37 @@ describe("browser conversation archive policy", () => {
 });
 
 describe("archiveChatGptConversation", () => {
+  test("selects only a visible Archive confirmation button inside a dialog", () => {
+    class FakeElement {
+      constructor(
+        readonly innerText: string,
+        readonly visible = true,
+      ) {}
+      getAttribute() {
+        return null;
+      }
+      getBoundingClientRect() {
+        return { left: 20, top: 30, width: this.visible ? 40 : 0, height: 20 };
+      }
+    }
+    const candidates = [
+      new FakeElement("Unarchive"),
+      new FakeElement("Archive", false),
+      new FakeElement("Archive"),
+    ];
+    const expression = buildTrustedArchiveConfirmationPointExpressionForTest();
+    const point = Function(
+      "document",
+      "HTMLElement",
+      "getComputedStyle",
+      `return ${expression};`,
+    )({ querySelectorAll: () => candidates }, FakeElement, () => ({
+      display: "block",
+      visibility: "visible",
+    }));
+    expect(point).toEqual({ x: 40, y: 40 });
+  });
+
   test("never chooses another chat menu when the current row has no actions button", () => {
     class FakeElement {
       getBoundingClientRect() {
@@ -219,12 +251,20 @@ describe("archiveChatGptConversation", () => {
   });
 
   test.each([
-    [true, true, "GET", true, undefined],
-    [false, false, "GET", false, "archive-readback-detail-not-archived"],
-    [true, true, "PATCH", false, "archive-readback-pending"],
+    [true, true, "GET", true, undefined, false],
+    [true, true, "GET", true, undefined, true],
+    [false, false, "GET", false, "archive-readback-detail-not-archived", false],
+    [true, true, "PATCH", false, "archive-readback-pending", false],
   ] as const)(
-    "uses the authenticated detail readback when sidebar present=%s and archive state=%s via %s",
-    async (sidebarPresent, detailArchived, requestMethod, expectedArchived, expectedReason) => {
+    "uses the authenticated detail readback when sidebar present=%s and archive state=%s via %s (dialog=%s)",
+    async (
+      sidebarPresent,
+      detailArchived,
+      requestMethod,
+      expectedArchived,
+      expectedReason,
+      confirmation,
+    ) => {
       vi.useFakeTimers();
       try {
         let onRequest:
@@ -242,6 +282,9 @@ describe("archiveChatGptConversation", () => {
             if (expression.includes("const roots = Array.from")) {
               return { result: { value: { x: 60, y: 60 } } };
             }
+            if (expression.includes('[role="dialog"] button')) {
+              return { result: { value: confirmation ? { x: 70, y: 70 } : null } };
+            }
             if (expression.includes("return { sidebarLinkPresent, saved: resources.some")) {
               return { result: { value: { sidebarLinkPresent: sidebarPresent, saved: true } } };
             }
@@ -253,7 +296,7 @@ describe("archiveChatGptConversation", () => {
             };
           }),
         };
-        const input = { dispatchMouseEvent: vi.fn(async () => {}) };
+        const input = { dispatchMouseEvent: vi.fn(async (_event: { type: string }) => {}) };
         const page = {
           bringToFront: vi.fn(),
           reload: vi.fn(async () => {}),
@@ -312,6 +355,9 @@ describe("archiveChatGptConversation", () => {
         } else {
           expect(client.Network.getResponseBody).not.toHaveBeenCalled();
         }
+        expect(
+          input.dispatchMouseEvent.mock.calls.filter(([event]) => event.type === "mouseReleased"),
+        ).toHaveLength(confirmation ? 3 : 2);
       } finally {
         vi.useRealTimers();
       }

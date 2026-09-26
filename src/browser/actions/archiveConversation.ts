@@ -173,6 +173,24 @@ export function buildTrustedArchiveMenuPointExpressionForTest(
   })()`;
 }
 
+export function buildTrustedArchiveConfirmationPointExpressionForTest(): string {
+  return `(() => {
+    const candidates = Array.from(document.querySelectorAll('[role="dialog"] button,[role="dialog"] [role="button"]'));
+    const button = candidates.find((element) => {
+      if (!(element instanceof HTMLElement)) return false;
+      const rect = element.getBoundingClientRect();
+      const style = getComputedStyle(element);
+      if (rect.width <= 0 || rect.height <= 0 || style.display === 'none' || style.visibility === 'hidden') return false;
+      const label = (element.innerText || element.getAttribute('aria-label') || '').trim().toLowerCase();
+      if (/unarchive|restore|アーカイブを解除/.test(label)) return false;
+      return /^(archive|archive conversation|archive chat|archiwizuj|アーカイブ|アーカイブする)$/.test(label);
+    });
+    if (!(button instanceof HTMLElement)) return null;
+    const rect = button.getBoundingClientRect();
+    return { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
+  })()`;
+}
+
 async function archiveWithTrustedInput(
   Runtime: ChromeClient["Runtime"],
   Input: ChromeClient["Input"],
@@ -225,6 +243,19 @@ async function archiveWithTrustedInput(
     return { status: "skipped", reason: "archive-menu-item-not-found", conversationUrl };
   }
   await clickArchivePoint(Input, archivePoint);
+  // Some supported ChatGPT layouts require a second Archive click in a dialog.
+  // Use trusted input for that button as well; direct-archive layouts have none.
+  for (let i = 0; i < 10; i += 1) {
+    await new Promise((resolve) => setTimeout(resolve, 100));
+    const confirmationPoint = await readArchiveClickPoint(
+      Runtime,
+      buildTrustedArchiveConfirmationPointExpressionForTest(),
+    );
+    if (confirmationPoint) {
+      await clickArchivePoint(Input, confirmationPoint);
+      break;
+    }
+  }
   const deadline = Date.now() + 6_000;
   while (Date.now() < deadline) {
     const result = await Runtime.evaluate({
