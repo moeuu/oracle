@@ -675,6 +675,15 @@ function shouldCloseOwnedRunTargetAfterRun(options: {
   );
 }
 
+function resolveCloseOwnedTabOnComplete(options: {
+  requested?: boolean;
+  archived: boolean;
+  keepBrowser: boolean;
+}): boolean {
+  // Archiving does not override an explicit request to keep the browser tab.
+  return Boolean(options.requested) || (options.archived && !options.keepBrowser);
+}
+
 function shouldCleanupBlankTabsAfterLastLease(options: {
   runStatus: "attempted" | "complete" | "cancelled";
   ownsTarget: boolean;
@@ -2529,7 +2538,11 @@ async function runBrowserModeInternal(
         runStatus,
         ownsTarget,
         keepBrowser: effectiveKeepBrowser,
-        closeOwnedTabOnComplete: options.closeOwnedTabOnComplete || archivedOnComplete,
+        closeOwnedTabOnComplete: resolveCloseOwnedTabOnComplete({
+          requested: options.closeOwnedTabOnComplete,
+          archived: archivedOnComplete,
+          keepBrowser: effectiveKeepBrowser,
+        }),
         closeOwnedTabOnCancel: options.closeOwnedTabOnCancel,
       });
       let keepBrowserOpen =
@@ -3976,7 +3989,11 @@ async function runRemoteBrowserMode(
         runStatus,
         ownsTarget,
         keepBrowser: keepRemoteBrowser,
-        closeOwnedTabOnComplete: options.closeOwnedTabOnComplete || archivedOnComplete,
+        closeOwnedTabOnComplete: resolveCloseOwnedTabOnComplete({
+          requested: options.closeOwnedTabOnComplete,
+          archived: archivedOnComplete,
+          keepBrowser: keepRemoteBrowser,
+        }),
         closeOwnedTabOnCancel: options.closeOwnedTabOnCancel,
       });
       const closeConnection = async () => {
@@ -4042,6 +4059,7 @@ export const __test__ = {
   normalizeAuthenticatedModelSelectionError,
   pollGeneratedImageOrTextAssistantResponse,
   resolveManualLoginWaitMs,
+  resolveCloseOwnedTabOnComplete,
   shouldApplyThinkingTimeSelection,
   shouldCleanupBlankTabsAfterLastLease,
   shouldCloseOwnedRunTargetAfterRun,
