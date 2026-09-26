@@ -450,6 +450,7 @@ async function maybeArchiveCompletedConversation({
   Runtime,
   Input,
   Page,
+  Client,
   logger,
   config,
   conversationUrl,
@@ -459,6 +460,7 @@ async function maybeArchiveCompletedConversation({
   Runtime: ChromeClient["Runtime"];
   Input?: ChromeClient["Input"];
   Page?: ChromeClient["Page"];
+  Client?: ChromeClient;
   logger: BrowserLogger;
   config: ResolvedBrowserConfig;
   conversationUrl?: string | null;
@@ -497,6 +499,7 @@ async function maybeArchiveCompletedConversation({
     conversationUrl,
     input: Input,
     page: Page,
+    client: Client,
   }).catch((error) => {
     const message = error instanceof Error ? error.message : String(error);
     logger(`[browser] ChatGPT archive failed (${message}).`);
@@ -1812,6 +1815,7 @@ async function runBrowserModeInternal(
         Runtime,
         Input,
         Page,
+        Client: client,
         logger,
         config,
         conversationUrl: lastUrl,
@@ -2347,6 +2351,7 @@ async function runBrowserModeInternal(
       Runtime,
       Input,
       Page,
+      Client: client,
       logger,
       config,
       conversationUrl: lastUrl,
@@ -3378,6 +3383,7 @@ async function runRemoteBrowserMode(
         Runtime,
         Input,
         Page,
+        Client: client,
         logger,
         config,
         conversationUrl: lastUrl,
@@ -3862,6 +3868,7 @@ async function runRemoteBrowserMode(
       Runtime,
       Input,
       Page,
+      Client: client,
       logger,
       config,
       conversationUrl: lastUrl,

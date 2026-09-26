@@ -70,16 +70,18 @@ export async function archiveChatGptConversation(
     conversationUrl,
     input,
     page,
+    client,
   }: {
     mode: BrowserArchiveMode;
     conversationUrl?: string | null;
     input?: ChromeClient["Input"];
     page?: ChromeClient["Page"];
+    client?: ChromeClient;
   },
 ): Promise<BrowserArchiveResult> {
   const value = (
     input?.dispatchMouseEvent
-      ? await archiveWithTrustedInput(Runtime, input, page, conversationUrl)
+      ? await archiveWithTrustedInput(Runtime, input, page, conversationUrl, client)
       : (
           await Runtime.evaluate({
             expression: buildArchiveConversationExpression(),
@@ -176,6 +178,7 @@ async function archiveWithTrustedInput(
   Input: ChromeClient["Input"],
   Page: ChromeClient["Page"] | undefined,
   conversationUrl?: string | null,
+  Client?: ChromeClient,
 ): Promise<
   | { status: "archived"; conversationUrl?: string | null }
   | { status: "skipped"; reason: string; conversationUrl?: string | null }
@@ -252,8 +255,39 @@ async function archiveWithTrustedInput(
       if (!Page?.reload) {
         return { status: "skipped", reason: "archive-readback-unavailable", conversationUrl };
       }
+      const detailPath = `/backend-api/conversations/${new URL(conversationUrl ?? "https://chatgpt.com").pathname.split("/").at(-1)}`;
+      const detailResponses: string[] = [];
+      const onDetailResponse = (event: {
+        requestId: string;
+        response: { url: string; status: number };
+      }) => {
+        try {
+          const url = new URL(event.response.url);
+          if (url.pathname === detailPath && event.response.status === 200) {
+            detailResponses.push(event.requestId);
+          }
+        } catch {
+          /* Ignore malformed resource URLs. */
+        }
+      };
+      Client?.on("Network.responseReceived", onDetailResponse);
       await Page.reload({ ignoreCache: true });
       await new Promise((resolve) => setTimeout(resolve, 4_000));
+      for (const requestId of detailResponses) {
+        const body = Client
+          ? await Client.Network.getResponseBody({ requestId }).catch(() => null)
+          : null;
+        if (!body?.body) continue;
+        let detail: { is_archived?: unknown };
+        try {
+          detail = JSON.parse(body.body) as { is_archived?: unknown };
+        } catch {
+          continue;
+        }
+        if (detail.is_archived === true) {
+          return { status: "archived", conversationUrl };
+        }
+      }
       const readback = await Runtime.evaluate({
         expression: `(() => {
             const current = new URL(${conversationLiteral} || location.href, location.href);
