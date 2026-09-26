@@ -252,6 +252,46 @@ describe("archiveChatGptConversation", () => {
     },
   );
 
+  test("waits for the reloaded sidebar before confirming an archived chat", async () => {
+    vi.useFakeTimers();
+    try {
+      let sidebarReads = 0;
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes('button[aria-label="Chat actions"]')) {
+            return { result: { value: { x: 50, y: 50 } } };
+          }
+          if (expression.includes("const roots = Array.from")) {
+            return { result: { value: { x: 60, y: 60 } } };
+          }
+          if (expression.includes("return { sidebarLinkPresent, saved: resources.some")) {
+            return { result: { value: { sidebarLinkPresent: false, saved: true } } };
+          }
+          if (expression.includes("performance.getEntriesByType('resource').filter")) {
+            return { result: { value: 0 } };
+          }
+          sidebarReads += 1;
+          return { result: { value: { recentCount: sidebarReads < 3 ? 0 : 5, currentPresent: false } } };
+        }),
+      };
+      const input = { dispatchMouseEvent: vi.fn(async () => {}) };
+      const page = { bringToFront: vi.fn(), reload: vi.fn(async () => {}) };
+      const client = { on: vi.fn(), Network: { getResponseBody: vi.fn() } };
+      const result = archiveChatGptConversation(runtime as never, vi.fn() as never, {
+        mode: "always",
+        conversationUrl: "https://chatgpt.com/c/abc",
+        input: input as never,
+        page: page as never,
+        client: client as never,
+      });
+      await vi.runAllTimersAsync();
+      await expect(result).resolves.toMatchObject({ archived: true });
+      expect(sidebarReads).toBe(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   test("keeps the archive expression scoped to Archive actions", () => {
     const expression = buildArchiveConversationExpressionForTest();
     expect(expression).toContain("findConversationMenuButton");

@@ -313,8 +313,13 @@ async function archiveWithTrustedInput(
           return { status: "archived", conversationUrl };
         }
       }
-      const readback = await Runtime.evaluate({
-        expression: `(() => {
+      // ChatGPT often reloads the conversation before its sidebar list has
+      // arrived. Give that list time to hydrate before treating readback as
+      // inconclusive; a missing link in an empty sidebar proves nothing.
+      const sidebarDeadline = Date.now() + 15_000;
+      while (Date.now() < sidebarDeadline) {
+        const readback = await Runtime.evaluate({
+          expression: `(() => {
             const current = new URL(${conversationLiteral} || location.href, location.href);
             const links = Array.from(document.querySelectorAll('a[href]'));
             const recentCount = links.filter((element) => {
@@ -329,13 +334,17 @@ async function archiveWithTrustedInput(
             });
             return { recentCount, currentPresent };
           })()`,
-        returnByValue: true,
-      }).catch(() => null);
-      const fresh = readback?.result?.value as
-        | { recentCount?: number; currentPresent?: boolean }
-        | undefined;
-      if ((fresh?.recentCount ?? 0) >= 3 && fresh?.currentPresent === false) {
-        return { status: "archived", conversationUrl };
+          returnByValue: true,
+        }).catch(() => null);
+        const fresh = readback?.result?.value as
+          | { recentCount?: number; currentPresent?: boolean }
+          | undefined;
+        if ((fresh?.recentCount ?? 0) >= 3) {
+          return fresh?.currentPresent === false
+            ? { status: "archived", conversationUrl }
+            : { status: "skipped", reason: "archive-readback-current-still-recent", conversationUrl };
+        }
+        await new Promise((resolve) => setTimeout(resolve, 300));
       }
       return { status: "skipped", reason: "archive-readback-pending", conversationUrl };
     }
