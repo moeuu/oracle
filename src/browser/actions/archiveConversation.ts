@@ -265,6 +265,7 @@ async function archiveWithTrustedInput(
         `/backend-api/conversation/${conversationId}`,
       ]);
       const detailResponses: string[] = [];
+      const finishedDetailResponses = new Set<string>();
       const onDetailResponse = (event: {
         requestId: string;
         response: { url: string; status: number };
@@ -278,9 +279,25 @@ async function archiveWithTrustedInput(
           /* Ignore malformed resource URLs. */
         }
       };
+      const onDetailFinished = (event: { requestId: string }) => {
+        if (detailResponses.includes(event.requestId)) {
+          finishedDetailResponses.add(event.requestId);
+        }
+      };
       Client?.on("Network.responseReceived", onDetailResponse);
+      Client?.on("Network.loadingFinished", onDetailFinished);
       await Page.reload({ ignoreCache: true });
       await new Promise((resolve) => setTimeout(resolve, 4_000));
+      // A responseReceived event is not a readable body yet. Give the matching
+      // loadingFinished event a bounded chance to arrive before readback.
+      const bodyDeadline = Date.now() + 2_000;
+      while (
+        detailResponses.length > 0 &&
+        finishedDetailResponses.size === 0 &&
+        Date.now() < bodyDeadline
+      ) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
       for (const requestId of detailResponses) {
         const body = Client
           ? await Client.Network.getResponseBody({ requestId }).catch(() => null)

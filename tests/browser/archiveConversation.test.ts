@@ -181,15 +181,17 @@ describe("archiveChatGptConversation", () => {
     });
   });
 
-  test.each(["conversation", "conversations"])(
-    "confirms a saved archive from the %s detail response with a short sidebar",
-    async (detailRoute) => {
+  test.each([["conversation", 0], ["conversations", 0], ["conversations", 4_500]] as const)(
+    "confirms a saved archive from the %s detail response after %ims with a short sidebar",
+    async (detailRoute, finishDelayMs) => {
       vi.useFakeTimers();
       try {
         const conversationUrl = "https://chatgpt.com/c/abc";
         let onDetailResponse:
           | ((event: { requestId: string; response: { url: string; status: number } }) => void)
           | undefined;
+        let onDetailFinished: ((event: { requestId: string }) => void) | undefined;
+        let bodyReady = false;
         const runtime = {
           evaluate: vi.fn(async ({ expression }: { expression: string }) => {
             if (expression.includes('button[aria-label="Chat actions"]')) {
@@ -214,14 +216,22 @@ describe("archiveChatGptConversation", () => {
               requestId: "detail-1",
               response: { url: `https://chatgpt.com/backend-api/${detailRoute}/abc`, status: 200 },
             });
+            setTimeout(() => {
+              bodyReady = true;
+              onDetailFinished?.({ requestId: "detail-1" });
+            }, finishDelayMs);
           }),
         };
         const client = {
-          on: vi.fn((_event: string, listener: typeof onDetailResponse) => {
-            onDetailResponse = listener;
+          on: vi.fn((event: string, listener: typeof onDetailResponse | typeof onDetailFinished) => {
+            if (event === "Network.responseReceived") onDetailResponse = listener as typeof onDetailResponse;
+            if (event === "Network.loadingFinished") onDetailFinished = listener as typeof onDetailFinished;
           }),
           Network: {
-            getResponseBody: vi.fn(async () => ({ body: '{"is_archived":true}' })),
+            getResponseBody: vi.fn(async () => {
+              if (!bodyReady) throw new Error("response body is not loaded yet");
+              return { body: '{"is_archived":true}' };
+            }),
           },
         };
         const input = { dispatchMouseEvent: vi.fn(async () => {}) };
