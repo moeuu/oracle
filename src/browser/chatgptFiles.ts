@@ -477,9 +477,11 @@ export async function readAssistantDownloadableFiles(
     const sandboxUrl = normalizeSandboxUrl(
       typeof item?.sandboxUrl === "string" ? item.sandboxUrl : item?.url,
     );
-    const browserDownload = item?.url === "browser-download" &&
+    const browserDownload =
+      item?.url === "browser-download" &&
       typeof item?.filename === "string" &&
-      item.filename.length > 0 && item.filename.length <= 255 &&
+      item.filename.length > 0 &&
+      item.filename.length <= 255 &&
       !/[\\/]/.test(item.filename);
     if (!downloadUrl && !sandboxUrl && !browserDownload) {
       continue;
