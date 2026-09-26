@@ -255,6 +255,7 @@ export async function submitPrompt(
   }
 
   if (deps.webSearch) await activateWebSearch(runtime, input, prompt, logger);
+  await assertChatListNotRateLimited(runtime);
 
   // Install before the click: a short answer can complete while commit verification runs.
   await runtime
@@ -400,11 +401,42 @@ async function waitForDomReady(
       | { ready?: boolean; composer?: boolean; fileInput?: boolean }
       | undefined;
     if (value?.ready && value.composer) {
+      await assertChatListNotRateLimited(Runtime);
       return;
     }
     await delay(150);
   }
   logger?.(`Page did not reach ready/composer state within ${timeoutMs}ms; continuing cautiously.`);
+}
+
+export function buildChatListRateLimitExpressionForTest(): string {
+  return `(() => {
+    const chatListLoading = Array.from(document.querySelectorAll('[role="status"]')).some((node) =>
+      /loading chats|チャット.*読み込/i.test((node.textContent || '').trim())
+    );
+    if (!chatListLoading) return false;
+    if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function') return false;
+    return performance.getEntriesByType('resource')
+      .filter((entry) => {
+        try { return new URL(entry.name, location.href).pathname === '/backend-api/conversations'; }
+        catch { return false; }
+      })
+      .slice(-5)
+      .some((entry) => entry.responseStatus === 429);
+  })()`;
+}
+
+async function assertChatListNotRateLimited(Runtime: ChromeClient["Runtime"]): Promise<void> {
+  const { result } = await Runtime.evaluate({
+    expression: buildChatListRateLimitExpressionForTest(),
+    returnByValue: true,
+  });
+  if (result?.value === true) {
+    throw new BrowserAutomationError(
+      "ChatGPT is rate-limiting its conversation list (HTTP 429); retry after the chat list loads.",
+      { stage: "submit-prompt", code: "chatgpt-conversation-list-rate-limited" },
+    );
+  }
 }
 
 function buildAttachmentReadyExpression(attachmentNames: AttachmentReadyInput[]): string {
