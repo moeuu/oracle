@@ -1401,7 +1401,7 @@ function buildMarkdownFallbackExtractor(minTurnLiteral?: string): string {
     const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
     const collectLastUser = (scope) => {
       if (!scope?.querySelectorAll) return null;
-      const userTurns = Array.from(scope.querySelectorAll('[data-message-author-role="user"], [data-turn="user"]'));
+      const userTurns = Array.from(scope.querySelectorAll('[data-message-author-role="user"], [data-turn="user"], [data-content-search-unit-key$=":user"]'));
       return userTurns[userTurns.length - 1] ?? null;
     };
     const lastUser = collectLastUser(root) || collectLastUser(document);

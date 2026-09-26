@@ -29,6 +29,22 @@ describe("conversation turn expressions", () => {
     ).toBe(1);
   });
 
+  test("counts outer and nested keyed markers as one turn each", () => {
+    const user = new FakeElement("article", { "data-testid": "conversation-turn-0" }, [
+      new FakeElement("div", { "data-content-search-unit-key": "fallback-turn-0:0:user" }),
+    ]);
+    const assistant = new FakeElement("article", { "data-testid": "conversation-turn-1" }, [
+      new FakeElement("div", { "data-content-search-unit-key": "fallback-turn-0:1:assistant" }),
+    ]);
+    const document = new FakeDocument([user, assistant]);
+    expect(
+      Function("document", `return ${buildConversationTurnListExpression()};`)(document),
+    ).toEqual([user, assistant]);
+    expect(
+      Function("document", `return ${buildConversationTurnCountExpression()};`)(document),
+    ).toBe(2);
+  });
+
   test("prefers top-level turn containers over nested broad-selector matches", () => {
     const containers = [{ id: "user" }, { id: "assistant" }];
     const nestedMatches = [...containers, { id: "nested-assistant" }];

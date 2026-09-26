@@ -173,6 +173,24 @@ describe("copied-profile launch flags", () => {
       false,
     );
   });
+
+  test("keeps the old cookie mode for existing macOS profiles", async () => {
+    const { resolveChromeLaunchOptionsForTest, shouldUseNativeManualLoginKeychain } =
+      await import("../../src/browser/chromeLifecycle.js");
+    const profile = await mkdtemp(path.join(os.tmpdir(), "oracle-keychain-mode-"));
+    try {
+      expect(await shouldUseNativeManualLoginKeychain(profile, "darwin")).toBe(true);
+      await writeFile(path.join(profile, "Local State"), "{}");
+      expect(await shouldUseNativeManualLoginKeychain(profile, "darwin")).toBe(false);
+      const legacy = resolveChromeLaunchOptionsForTest([], false, false, "darwin");
+      expect(legacy.ignoreDefaultFlags).toBe(false);
+      await writeFile(path.join(profile, ".oracle-native-keychain-v1"), "native-keychain\n");
+      expect(await shouldUseNativeManualLoginKeychain(profile, "darwin")).toBe(true);
+      expect(await shouldUseNativeManualLoginKeychain(profile, "linux")).toBe(false);
+    } finally {
+      await rm(profile, { recursive: true, force: true });
+    }
+  });
 });
 
 describe("hidden-window launch flags", () => {

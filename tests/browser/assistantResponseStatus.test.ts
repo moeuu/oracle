@@ -288,6 +288,53 @@ describe("completion action correlation", () => {
     expect(expression).toContain("return Boolean(lastUser.compareDocumentPosition(node) & 4)");
     expect(expression).toContain("if (!hasTurns) return isAfterCurrentUser(node)");
   });
+
+  test("accepts completion after a keyed-only user turn", () => {
+    const answer = {
+      innerText: "Completed answer",
+      textContent: "Completed answer",
+      innerHTML: "<p>Completed answer</p>",
+      closest: () => null,
+      matches: () => true,
+    };
+    const user = {
+      innerText: "Submitted prompt",
+      textContent: "Submitted prompt",
+      compareDocumentPosition: (node: unknown) => (node === answer ? 4 : 0),
+      contains: () => false,
+    };
+    const assistant = { contains: (node: unknown) => node === answer };
+    const status = { textContent: "Response complete" };
+    const root = {
+      querySelectorAll: (selector: string) => {
+        if (selector.includes('key$=":user"')) return [user];
+        if (selector.startsWith(".markdown")) return [answer];
+        return [];
+      },
+      querySelector: () => null,
+    };
+    const document = {
+      body: root,
+      querySelector: (selector: string) => (selector === "main" ? root : null),
+      querySelectorAll: (selector: string) => {
+        if (selector === '[data-testid^="conversation-turn"],[data-content-search-unit-key]') {
+          return [user, assistant];
+        }
+        if (selector.includes('key$=":user"')) return [user];
+        if (selector === '[role="status"][aria-live="polite"]') return [status];
+        return [];
+      },
+    };
+    const snapshot = Function(
+      "document",
+      `return ${buildMarkdownFallbackExtractorForTest("1")};`,
+    )(document)();
+    expect(snapshot).toMatchObject({
+      text: "Completed answer",
+      turnIndex: 1,
+      completionVisible: true,
+    });
+  });
 });
 
 describe("classifyTurnTerminal", () => {
