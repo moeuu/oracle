@@ -1130,7 +1130,6 @@ async function runBrowserModeInternal(
   let answerMessageId: string | undefined;
   let answerHtml = "";
   let runStatus: "attempted" | "complete" | "cancelled" = "attempted";
-  let archivedOnComplete = false;
   let connectionClosedUnexpectedly = false;
   let stopThinkingMonitor: (() => void) | null = null;
   let removeDialogHandler: (() => void) | null = null;
@@ -1823,7 +1822,6 @@ async function runBrowserModeInternal(
         followUpCount: 0,
         requiredArtifactsSaved: Boolean(reportArtifact && transcriptArtifact),
       });
-      archivedOnComplete = archive.archived;
       return {
         answerText: researchResult.text,
         answerMarkdown: researchResult.text,
@@ -2363,7 +2361,6 @@ async function runBrowserModeInternal(
         imageArtifacts.savedImages.length === imageArtifacts.imageCount &&
         fileArtifacts.savedFiles.length === fileArtifacts.fileCount,
     });
-    archivedOnComplete = archive.archived;
     runStatus = "complete";
     const durationMs = Date.now() - startedAt;
     const answerChars = answerText.length;
@@ -2529,7 +2526,7 @@ async function runBrowserModeInternal(
         runStatus,
         ownsTarget,
         keepBrowser: effectiveKeepBrowser,
-        closeOwnedTabOnComplete: options.closeOwnedTabOnComplete || archivedOnComplete,
+        closeOwnedTabOnComplete: options.closeOwnedTabOnComplete,
         closeOwnedTabOnCancel: options.closeOwnedTabOnCancel,
       });
       let keepBrowserOpen =
@@ -2975,7 +2972,6 @@ async function runRemoteBrowserMode(
   let answerHtml = "";
   let connectionClosedUnexpectedly = false;
   let runStatus: "attempted" | "complete" | "cancelled" = "attempted";
-  let archivedOnComplete = false;
   let stopThinkingMonitor: (() => void) | null = null;
   let removeDialogHandler: (() => void) | null = null;
   let connection: Awaited<ReturnType<typeof connectToRemoteChrome>> | null = null;
@@ -3394,7 +3390,6 @@ async function runRemoteBrowserMode(
         followUpCount: 0,
         requiredArtifactsSaved: Boolean(reportArtifact && transcriptArtifact),
       });
-      archivedOnComplete = archive.archived;
       runStatus = "complete";
       return {
         answerText: researchResult.text,
@@ -3883,7 +3878,6 @@ async function runRemoteBrowserMode(
         imageArtifacts.savedImages.length === imageArtifacts.imageCount &&
         fileArtifacts.savedFiles.length === fileArtifacts.fileCount,
     });
-    archivedOnComplete = archive.archived;
     const durationMs = Date.now() - startedAt;
     const answerChars = answerText.length;
     const answerTokens = estimateTokenCount(answerMarkdown);
@@ -3976,7 +3970,7 @@ async function runRemoteBrowserMode(
         runStatus,
         ownsTarget,
         keepBrowser: keepRemoteBrowser,
-        closeOwnedTabOnComplete: options.closeOwnedTabOnComplete || archivedOnComplete,
+        closeOwnedTabOnComplete: options.closeOwnedTabOnComplete,
         closeOwnedTabOnCancel: options.closeOwnedTabOnCancel,
       });
       const closeConnection = async () => {

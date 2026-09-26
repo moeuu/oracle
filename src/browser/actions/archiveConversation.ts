@@ -255,7 +255,15 @@ async function archiveWithTrustedInput(
       if (!Page?.reload) {
         return { status: "skipped", reason: "archive-readback-unavailable", conversationUrl };
       }
-      const detailPath = `/backend-api/conversations/${new URL(conversationUrl ?? "https://chatgpt.com").pathname.split("/").at(-1)}`;
+      const conversationId = new URL(conversationUrl ?? "https://chatgpt.com").pathname
+        .split("/")
+        .at(-1);
+      // The current page loads the plural detail route; older Oracle readers
+      // also use the singular route. Accept either authenticated readback.
+      const detailPaths = new Set([
+        `/backend-api/conversations/${conversationId}`,
+        `/backend-api/conversation/${conversationId}`,
+      ]);
       const detailResponses: string[] = [];
       const onDetailResponse = (event: {
         requestId: string;
@@ -263,7 +271,7 @@ async function archiveWithTrustedInput(
       }) => {
         try {
           const url = new URL(event.response.url);
-          if (url.pathname === detailPath && event.response.status === 200) {
+          if (detailPaths.has(url.pathname) && event.response.status === 200) {
             detailResponses.push(event.requestId);
           }
         } catch {

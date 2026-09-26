@@ -181,6 +181,67 @@ describe("archiveChatGptConversation", () => {
     });
   });
 
+  test.each(["conversation", "conversations"])(
+    "confirms a saved archive from the %s detail response with a short sidebar",
+    async (detailRoute) => {
+      vi.useFakeTimers();
+      try {
+        const conversationUrl = "https://chatgpt.com/c/abc";
+        let onDetailResponse:
+          | ((event: { requestId: string; response: { url: string; status: number } }) => void)
+          | undefined;
+        const runtime = {
+          evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+            if (expression.includes('button[aria-label="Chat actions"]')) {
+              return { result: { value: { x: 50, y: 50 } } };
+            }
+            if (expression.includes("const roots = Array.from")) {
+              return { result: { value: { x: 60, y: 60 } } };
+            }
+            if (expression.includes("return { sidebarLinkPresent, saved: resources.some")) {
+              return { result: { value: { sidebarLinkPresent: false, saved: true } } };
+            }
+            if (expression.includes("performance.getEntriesByType('resource').filter")) {
+              return { result: { value: 0 } };
+            }
+            return { result: { value: { recentCount: 1, currentPresent: false } } };
+          }),
+        };
+        const page = {
+          bringToFront: vi.fn(),
+          reload: vi.fn(async () => {
+            onDetailResponse?.({
+              requestId: "detail-1",
+              response: { url: `https://chatgpt.com/backend-api/${detailRoute}/abc`, status: 200 },
+            });
+          }),
+        };
+        const client = {
+          on: vi.fn((_event: string, listener: typeof onDetailResponse) => {
+            onDetailResponse = listener;
+          }),
+          Network: {
+            getResponseBody: vi.fn(async () => ({ body: '{"is_archived":true}' })),
+          },
+        };
+        const input = { dispatchMouseEvent: vi.fn(async () => {}) };
+        const result = archiveChatGptConversation(runtime as never, vi.fn() as never, {
+          mode: "always",
+          conversationUrl,
+          input: input as never,
+          page: page as never,
+          client: client as never,
+        });
+        await vi.runAllTimersAsync();
+        await expect(result).resolves.toMatchObject({ archived: true, conversationUrl });
+        expect(page.reload).toHaveBeenCalledOnce();
+        expect(client.Network.getResponseBody).toHaveBeenCalledWith({ requestId: "detail-1" });
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   test("keeps the archive expression scoped to Archive actions", () => {
     const expression = buildArchiveConversationExpressionForTest();
     expect(expression).toContain("findConversationMenuButton");
