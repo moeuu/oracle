@@ -124,7 +124,7 @@ describe("readAssistantDownloadableFiles", () => {
     });
   });
 
-  test("discovers current assistant download buttons without a link and ignores user uploads", async () => {
+  test("preserves two linkless assistant downloads and ignores user uploads", async () => {
     class SearchUnit {
       tagName: string;
       textContent: string;
@@ -160,7 +160,10 @@ describe("readAssistantDownloadableFiles", () => {
     const assistant = new SearchUnit(
       "DIV",
       { "data-content-search-unit-key": "turn:1:assistant" },
-      [new SearchUnit("BUTTON", { "aria-label": "Download report.zip" })],
+      [
+        new SearchUnit("BUTTON", { "aria-label": "Download report.zip" }),
+        new SearchUnit("BUTTON", { "aria-label": "Download evidence.csv" }),
+      ],
     );
     const expression = __test__.buildAssistantDownloadableFilesExpression(1);
     const value = Function(
@@ -175,6 +178,7 @@ describe("readAssistantDownloadableFiles", () => {
 
     expect(await readAssistantDownloadableFiles(runtime, 1)).toEqual([
       expect.objectContaining({ url: "browser-download", filename: "report.zip" }),
+      expect.objectContaining({ url: "browser-download", filename: "evidence.csv" }),
     ]);
   });
 });
@@ -1194,7 +1198,7 @@ describe("collectChatGptFileArtifacts", () => {
       { markClicked: true, maxClicks: 1 },
     );
 
-    expect(fileExpression).toContain("files.push(...serializeFiles(messageRoot))");
+    expect(fileExpression).toContain("files.push(...serializeFiles(messageRoot, index))");
     expect(fileExpression).not.toContain("if (files.length > 0) return files");
     expect(expression).toContain("/^download\\b/");
     expect(expression).not.toContain("/^download\b/");

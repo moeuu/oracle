@@ -258,7 +258,11 @@ function dedupeFiles(files: BrowserDownloadableFile[]): BrowserDownloadableFile[
   const deduped: BrowserDownloadableFile[] = [];
   const aliases = new Map<string, number>();
   for (const file of files) {
-    const fileAliases = [file.downloadUrl, file.sandboxUrl, file.url].filter(
+    const fileIdentity =
+      file.url === "browser-download"
+        ? `browser-download:${file.candidateId ?? file.filename ?? file.label ?? deduped.length}`
+        : file.url;
+    const fileAliases = [file.downloadUrl, file.sandboxUrl, fileIdentity].filter(
       (value): value is string => Boolean(value),
     );
     const existingIndex = fileAliases
@@ -411,7 +415,7 @@ function buildAssistantDownloadableFilesExpression(minTurnIndex?: number): strin
       }
       return values;
     };
-    const serializeCandidate = (node) => {
+    const serializeCandidate = (node, candidateId) => {
       if (!(node instanceof HTMLElement)) return null;
       const values = collectValues(node);
       const downloadUrl = values.find(isChatGptDownloadUrl) || '';
@@ -428,6 +432,7 @@ function buildAssistantDownloadableFilesExpression(minTurnIndex?: number): strin
       const filename = downloadAttr || basename(sandboxUrl) || basename(downloadUrl) || labelFilename || label || '';
       return {
         url: downloadUrl || sandboxUrl || values.find(hrefKind) || 'browser-download',
+        candidateId: !downloadUrl && !sandboxUrl ? candidateId : '',
         downloadUrl,
         sandboxUrl,
         filename,
@@ -435,7 +440,7 @@ function buildAssistantDownloadableFilesExpression(minTurnIndex?: number): strin
         mimeType: node.getAttribute('type') || '',
       };
     };
-    const serializeFiles = (root) =>
+    const serializeFiles = (root, turnIndex) =>
       Array.from(root.querySelectorAll([
         'a[href]',
         'a[download]',
@@ -445,7 +450,7 @@ function buildAssistantDownloadableFilesExpression(minTurnIndex?: number): strin
         '[aria-label]',
         '[title]',
       ].join(',')))
-        .map(serializeCandidate)
+        .map((node, controlIndex) => serializeCandidate(node, turnIndex + ':' + controlIndex))
         .filter(Boolean);
     const turns = ${buildConversationTurnListExpression()};
     const files = [];
@@ -454,7 +459,7 @@ function buildAssistantDownloadableFilesExpression(minTurnIndex?: number): strin
       if (!isAssistantTurn(turn)) continue;
       if (MIN_TURN_INDEX >= 0 && index < MIN_TURN_INDEX) continue;
       const messageRoot = turn.querySelector(ASSISTANT_SELECTOR) || turn;
-      files.push(...serializeFiles(messageRoot));
+      files.push(...serializeFiles(messageRoot, index));
     }
     return files;
   })()`;
@@ -488,6 +493,8 @@ export async function readAssistantDownloadableFiles(
     }
     normalized.push({
       url: downloadUrl ?? sandboxUrl ?? "browser-download",
+      candidateId:
+        browserDownload && typeof item?.candidateId === "string" ? item.candidateId : undefined,
       downloadUrl,
       sandboxUrl,
       filename: typeof item?.filename === "string" ? item.filename : undefined,
