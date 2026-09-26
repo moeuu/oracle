@@ -117,6 +117,21 @@ describe("promptComposer", () => {
       { href: "https://chatgpt.com/" },
     );
     expect(pageState).toBe(true);
+    const failedHistoryState = Function(
+      "document",
+      "performance",
+      "location",
+      `return ${expression};`,
+    )(
+      { querySelectorAll: () => [{ textContent: "Unable to load history Retry" }] },
+      {
+        getEntriesByType: () => [
+          { name: "https://chatgpt.com/backend-api/conversations", responseStatus: 429 },
+        ],
+      },
+      { href: "https://chatgpt.com/" },
+    );
+    expect(failedHistoryState).toBe(true);
     const loadedState = Function(
       "document",
       "performance",

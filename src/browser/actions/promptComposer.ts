@@ -411,10 +411,10 @@ async function waitForDomReady(
 
 export function buildChatListRateLimitExpressionForTest(): string {
   return `(() => {
-    const chatListLoading = Array.from(document.querySelectorAll('[role="status"]')).some((node) =>
-      /loading chats|チャット.*読み込/i.test((node.textContent || '').trim())
+    const chatListUnavailable = Array.from(document.querySelectorAll('[role="status"]')).some((node) =>
+      /loading chats|unable to load history|チャット.*読み込|履歴.*読み込/i.test((node.textContent || '').trim())
     );
-    if (!chatListLoading) return false;
+    if (!chatListUnavailable) return false;
     if (typeof performance === 'undefined' || typeof performance.getEntriesByType !== 'function') return false;
     return performance.getEntriesByType('resource')
       .filter((entry) => {
