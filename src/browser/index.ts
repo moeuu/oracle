@@ -679,9 +679,12 @@ function resolveCloseOwnedTabOnComplete(options: {
   requested?: boolean;
   archived: boolean;
   keepBrowser: boolean;
+  archiveAlways?: boolean;
 }): boolean {
-  // Archiving does not override an explicit request to keep the browser tab.
-  return Boolean(options.requested) || (options.archived && !options.keepBrowser);
+  // Explicit always-archive mode closes completed conversation tabs while
+  // keeping the authenticated browser process available for later runs.
+  return Boolean(options.requested) ||
+    (options.archived && (Boolean(options.archiveAlways) || !options.keepBrowser));
 }
 
 function shouldCleanupBlankTabsAfterLastLease(options: {
@@ -2542,6 +2545,7 @@ async function runBrowserModeInternal(
           requested: options.closeOwnedTabOnComplete,
           archived: archivedOnComplete,
           keepBrowser: effectiveKeepBrowser,
+          archiveAlways: config.archiveConversations === "always",
         }),
         closeOwnedTabOnCancel: options.closeOwnedTabOnCancel,
       });
@@ -3993,6 +3997,7 @@ async function runRemoteBrowserMode(
           requested: options.closeOwnedTabOnComplete,
           archived: archivedOnComplete,
           keepBrowser: keepRemoteBrowser,
+          archiveAlways: config.archiveConversations === "always",
         }),
         closeOwnedTabOnCancel: options.closeOwnedTabOnCancel,
       });

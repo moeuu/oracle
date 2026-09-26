@@ -174,6 +174,23 @@ describe("browser run target cleanup", () => {
     ).toBe(true);
   });
 
+  test("closes an archived tab in always mode while keeping Chrome open", () => {
+    const closeOwnedTabOnComplete = __test__.resolveCloseOwnedTabOnComplete({
+      archived: true,
+      keepBrowser: true,
+      archiveAlways: true,
+    });
+    expect(closeOwnedTabOnComplete).toBe(true);
+    expect(
+      __test__.shouldCloseOwnedRunTargetAfterRun({
+        runStatus: "complete",
+        ownsTarget: true,
+        keepBrowser: true,
+        closeOwnedTabOnComplete,
+      }),
+    ).toBe(true);
+  });
+
   test("closes owned completed tabs by default", () => {
     expect(
       __test__.shouldCloseOwnedRunTargetAfterRun({
