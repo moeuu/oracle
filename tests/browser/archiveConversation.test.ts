@@ -234,6 +234,106 @@ describe("archiveChatGptConversation", () => {
     },
   );
 
+  test.each([
+    [true, true, "GET", true, undefined],
+    [false, false, "GET", false, "archive-readback-detail-not-archived"],
+    [true, true, "PATCH", false, "archive-readback-current-still-recent"],
+  ] as const)(
+    "uses the authenticated detail readback when sidebar present=%s and archive state=%s via %s",
+    async (sidebarPresent, detailArchived, requestMethod, expectedArchived, expectedReason) => {
+      vi.useFakeTimers();
+      try {
+        let onRequest:
+          | ((event: { requestId: string; request: { url: string; method: string } }) => void)
+          | undefined;
+        let onResponse:
+          | ((event: { requestId: string; response: { url: string; status: number } }) => void)
+          | undefined;
+        let onFinished: ((event: { requestId: string }) => void) | undefined;
+        const runtime = {
+          evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+            if (expression.includes('button[aria-label="Chat actions"]')) {
+              return { result: { value: { x: 50, y: 50 } } };
+            }
+            if (expression.includes("const roots = Array.from")) {
+              return { result: { value: { x: 60, y: 60 } } };
+            }
+            if (expression.includes("return { sidebarLinkPresent, saved: resources.some")) {
+              return { result: { value: { sidebarLinkPresent: sidebarPresent, saved: true } } };
+            }
+            if (expression.includes("performance.getEntriesByType('resource').filter")) {
+              return { result: { value: 0 } };
+            }
+            return {
+              result: { value: { recentCount: 5, currentPresent: sidebarPresent, onHome: true } },
+            };
+          }),
+        };
+        const input = { dispatchMouseEvent: vi.fn(async () => {}) };
+        const page = {
+          bringToFront: vi.fn(),
+          reload: vi.fn(async () => {}),
+          navigate: vi.fn(async ({ url }: { url: string }) => {
+            if (!url.endsWith("/c/abc")) return;
+            onRequest?.({
+              requestId: "detail-1",
+              request: {
+                url: "https://chatgpt.com/backend-api/conversations/abc",
+                method: requestMethod,
+              },
+            });
+            onResponse?.({
+              requestId: "detail-1",
+              response: { url: "https://chatgpt.com/backend-api/conversations/abc", status: 200 },
+            });
+            onFinished?.({ requestId: "detail-1" });
+          }),
+        };
+        const client = {
+          Network: {
+            enable: vi.fn(async () => {}),
+            requestWillBeSent: vi.fn((listener: typeof onRequest) => {
+              onRequest = listener;
+              return () => {};
+            }),
+            responseReceived: vi.fn((listener: typeof onResponse) => {
+              onResponse = listener;
+              return () => {};
+            }),
+            loadingFinished: vi.fn((listener: typeof onFinished) => {
+              onFinished = listener;
+              return () => {};
+            }),
+            getResponseBody: vi.fn(async () => ({
+              body: JSON.stringify({ is_archived: detailArchived }),
+              base64Encoded: false,
+            })),
+          },
+        };
+        const result = archiveChatGptConversation(runtime as never, vi.fn() as never, {
+          mode: "always",
+          conversationUrl: "https://chatgpt.com/c/abc",
+          input: input as never,
+          page: page as never,
+          client: client as never,
+        });
+        await vi.runAllTimersAsync();
+        await expect(result).resolves.toMatchObject(
+          expectedReason
+            ? { archived: expectedArchived, reason: expectedReason }
+            : { archived: expectedArchived },
+        );
+        if (requestMethod === "GET") {
+          expect(client.Network.getResponseBody).toHaveBeenCalledWith({ requestId: "detail-1" });
+        } else {
+          expect(client.Network.getResponseBody).not.toHaveBeenCalled();
+        }
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
   test("waits for the reloaded sidebar before confirming an archived chat", async () => {
     vi.useFakeTimers();
     try {

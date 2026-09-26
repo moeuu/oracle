@@ -70,6 +70,7 @@ export async function archiveChatGptConversation(
     conversationUrl,
     input,
     page,
+    client,
   }: {
     mode: BrowserArchiveMode;
     conversationUrl?: string | null;
@@ -80,7 +81,7 @@ export async function archiveChatGptConversation(
 ): Promise<BrowserArchiveResult> {
   const value = (
     input?.dispatchMouseEvent
-      ? await archiveWithTrustedInput(Runtime, input, page, conversationUrl)
+      ? await archiveWithTrustedInput(Runtime, input, page, conversationUrl, client)
       : (
           await Runtime.evaluate({
             expression: buildArchiveConversationExpression(),
@@ -177,6 +178,7 @@ async function archiveWithTrustedInput(
   Input: ChromeClient["Input"],
   Page: ChromeClient["Page"] | undefined,
   conversationUrl?: string | null,
+  Client?: ChromeClient,
 ): Promise<
   | { status: "archived"; conversationUrl?: string | null }
   | { status: "skipped"; reason: string; conversationUrl?: string | null }
@@ -247,9 +249,9 @@ async function archiveWithTrustedInput(
     const state = result.result?.value as
       | { sidebarLinkPresent?: boolean; saved?: boolean }
       | undefined;
-    if (state?.saved && state.sidebarLinkPresent === false) {
-      // The sidebar removes a chat optimistically. Reload before claiming the
-      // backend kept the archive; a 200 PATCH alone is not durable proof.
+    if (state?.saved) {
+      // The sidebar can retain or remove a chat optimistically. A 200 PATCH
+      // alone is not durable proof, so read the saved conversation again.
       if (!Page?.navigate || !Page?.reload) {
         return { status: "skipped", reason: "archive-readback-unavailable", conversationUrl };
       }
@@ -257,6 +259,22 @@ async function archiveWithTrustedInput(
       // the neutral home page, then reload that page to reject optimistic UI
       // removal or a transient successful PATCH that did not persist.
       const homeUrl = new URL("/", conversationUrl ?? "https://chatgpt.com").toString();
+      const confirmDetail = async (
+        fallback:
+          | { status: "archived"; conversationUrl?: string | null }
+          | { status: "skipped"; reason: string; conversationUrl?: string | null },
+      ) => {
+        const archived = await readAuthenticatedArchiveState(Client, Page, conversationUrl);
+        if (archived === true) return { status: "archived" as const, conversationUrl };
+        if (archived === false) {
+          return {
+            status: "skipped" as const,
+            reason: "archive-readback-detail-not-archived",
+            conversationUrl,
+          };
+        }
+        return fallback;
+      };
       const readSidebarAfterHydration = async (): Promise<boolean | null> => {
         await new Promise((resolve) => setTimeout(resolve, 4_000));
         const sidebarDeadline = Date.now() + 30_000;
@@ -292,30 +310,106 @@ async function archiveWithTrustedInput(
       await Page.navigate({ url: homeUrl });
       const firstPresent = await readSidebarAfterHydration();
       if (firstPresent === true) {
-        return {
+        return confirmDetail({
           status: "skipped",
           reason: "archive-readback-current-still-recent",
           conversationUrl,
-        };
+        });
       }
       if (firstPresent === null) {
-        return { status: "skipped", reason: "archive-readback-pending", conversationUrl };
+        return confirmDetail({
+          status: "skipped",
+          reason: "archive-readback-pending",
+          conversationUrl,
+        });
       }
       await Page.reload({ ignoreCache: true });
       const secondPresent = await readSidebarAfterHydration();
-      if (secondPresent === false) return { status: "archived", conversationUrl };
-      return {
+      if (secondPresent === false) {
+        return confirmDetail({ status: "archived", conversationUrl });
+      }
+      return confirmDetail({
         status: "skipped",
         reason:
           secondPresent === true
             ? "archive-readback-current-still-recent"
             : "archive-readback-pending",
         conversationUrl,
-      };
+      });
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
   return { status: "skipped", reason: "archive-not-confirmed", conversationUrl };
+}
+
+async function readAuthenticatedArchiveState(
+  Client: ChromeClient | undefined,
+  Page: ChromeClient["Page"] | undefined,
+  conversationUrl?: string | null,
+): Promise<boolean | null> {
+  if (
+    !Client?.Network?.requestWillBeSent ||
+    !Client?.Network?.responseReceived ||
+    !Client.Network.loadingFinished ||
+    !Client.Network.getResponseBody ||
+    !Page?.navigate ||
+    !conversationUrl
+  )
+    return null;
+  const id = new URL(conversationUrl).pathname.split("/").at(-1);
+  if (!id) return null;
+  const paths = new Set([`/backend-api/conversations/${id}`, `/backend-api/conversation/${id}`]);
+  const origin = new URL(conversationUrl).origin;
+  const getRequests = new Set<string>();
+  const responses = new Set<string>();
+  const finished = new Set<string>();
+  await Client.Network.enable();
+  const stopRequest = Client.Network.requestWillBeSent(({ requestId, request }) => {
+    try {
+      const url = new URL(request.url);
+      if (request.method === "GET" && url.origin === origin && paths.has(url.pathname)) {
+        getRequests.add(requestId);
+      }
+    } catch {
+      // Ignore unrelated or malformed resource URLs.
+    }
+  });
+  const stopResponse = Client.Network.responseReceived(({ requestId, response }) => {
+    if (response.status === 200 && getRequests.has(requestId)) responses.add(requestId);
+  });
+  const stopFinished = Client.Network.loadingFinished(({ requestId }) => {
+    if (responses.has(requestId)) finished.add(requestId);
+  });
+  try {
+    await Page.navigate({ url: conversationUrl });
+    const deadline = Date.now() + 12_000;
+    while (Date.now() < deadline) {
+      for (const requestId of finished) {
+        finished.delete(requestId);
+        const response = await Client.Network.getResponseBody({ requestId }).catch(() => null);
+        if (!response?.body) continue;
+        try {
+          const raw = response.base64Encoded
+            ? Buffer.from(response.body, "base64").toString("utf8")
+            : response.body;
+          const detail = JSON.parse(raw) as {
+            is_archived?: unknown;
+            conversation?: { is_archived?: unknown };
+          };
+          const archived = detail.is_archived ?? detail.conversation?.is_archived;
+          if (typeof archived === "boolean") return archived;
+        } catch {
+          // Keep waiting for a readable authenticated detail response.
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 150));
+    }
+    return null;
+  } finally {
+    stopRequest();
+    stopResponse();
+    stopFinished();
+  }
 }
 
 export function buildArchiveConversationExpressionForTest(): string {
