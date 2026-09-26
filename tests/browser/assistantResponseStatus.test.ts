@@ -208,6 +208,7 @@ describe("completion action correlation", () => {
     messageId?: string;
     minTurnIndex?: number;
     turns: FakeTurn[];
+    completionStatus?: string;
   }): boolean {
     const expression = buildCompletionVisibilityExpressionForTest(
       { messageId: args.messageId },
@@ -217,7 +218,14 @@ describe("completion action correlation", () => {
       Array,
       Boolean,
       HTMLElement: FakeTurn,
-      document: { querySelectorAll: () => args.turns },
+      document: {
+        querySelectorAll: (selector: string) =>
+          selector.includes('[role="status"]')
+            ? args.completionStatus
+              ? [{ textContent: args.completionStatus }]
+              : []
+            : args.turns,
+      },
     });
     return new Script(expression).runInContext(context) as boolean;
   }
@@ -238,6 +246,25 @@ describe("completion action correlation", () => {
     expect(
       evaluateCompletionVisibility({ messageId: "current-message", turns: [currentTurn] }),
     ).toBe(true);
+  });
+
+  test("accepts the completed announcement for the current assistant turn", () => {
+    const userTurn = new FakeTurn({ "data-turn": "user" }, false);
+    const currentTurn = new FakeTurn({ "data-turn": "assistant" }, false);
+    expect(
+      evaluateCompletionVisibility({
+        minTurnIndex: 1,
+        turns: [userTurn, currentTurn],
+        completionStatus: "Response complete",
+      }),
+    ).toBe(true);
+    expect(
+      evaluateCompletionVisibility({
+        minTurnIndex: 2,
+        turns: [userTurn, currentTurn],
+        completionStatus: "Response complete",
+      }),
+    ).toBe(false);
   });
 
   test("rejects controls whose assistant identity differs from the sample", () => {

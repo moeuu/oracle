@@ -801,6 +801,9 @@ function buildCompletionVisibilityExpression(
     const ASSISTANT_SELECTOR = '${ASSISTANT_ROLE_SELECTOR}';
     const isAssistantTurn = (node) => {
       if (!(node instanceof HTMLElement)) return false;
+      const searchKey = (node.getAttribute('data-content-search-unit-key') || node.getAttribute('data-chatgpt-search-unit-key') || '').toLowerCase();
+      if (searchKey.endsWith(':user')) return false;
+      if (searchKey.endsWith(':assistant')) return true;
       const turnAttr = (node.getAttribute('data-turn') || node.dataset?.turn || '').toLowerCase();
       if (turnAttr === 'assistant') return true;
       const role = (node.getAttribute('data-message-author-role') || node.dataset?.messageAuthorRole || '').toLowerCase();
@@ -839,6 +842,10 @@ function buildCompletionVisibilityExpression(
       return false;
     }
 
+    const responseComplete = Array.from(
+      document.querySelectorAll('[role="status"][aria-live="polite"]'),
+    ).some((status) => (status.textContent || '').trim() === 'Response complete');
+    if (responseComplete) return true;
     if (lastAssistantTurn.querySelector('${FINISHED_ACTIONS_SELECTOR}')) return true;
     const markdowns = lastAssistantTurn.querySelectorAll('.markdown');
     return Array.from(markdowns).some((node) => (node.textContent || '').trim() === 'Done');
@@ -1030,6 +1037,9 @@ function buildResponseObserverExpression(
     // Helper to detect assistant turns - must match buildAssistantExtractor logic for consistency.
     const isAssistantTurn = (node) => {
       if (!(node instanceof HTMLElement)) return false;
+      const searchKey = (node.getAttribute('data-content-search-unit-key') || node.getAttribute('data-chatgpt-search-unit-key') || '').toLowerCase();
+      if (searchKey.endsWith(':user')) return false;
+      if (searchKey.endsWith(':assistant')) return true;
       const turnAttr = (node.getAttribute('data-turn') || node.dataset?.turn || '').toLowerCase();
       if (turnAttr === 'assistant') return true;
       const role = (node.getAttribute('data-message-author-role') || node.dataset?.messageAuthorRole || '').toLowerCase();
@@ -1241,6 +1251,9 @@ function buildAssistantExtractor(functionName: string): string {
     const ASSISTANT_SELECTOR = ${assistantLiteral};
     const isAssistantTurn = (node) => {
       if (!(node instanceof HTMLElement)) return false;
+      const searchKey = (node.getAttribute('data-content-search-unit-key') || node.getAttribute('data-chatgpt-search-unit-key') || '').toLowerCase();
+      if (searchKey.endsWith(':user')) return false;
+      if (searchKey.endsWith(':assistant')) return true;
       const turnAttr = (node.getAttribute('data-turn') || node.dataset?.turn || '').toLowerCase();
       if (turnAttr === 'assistant') {
         return true;
@@ -1376,8 +1389,14 @@ function buildMarkdownFallbackExtractor(minTurnLiteral?: string): string {
     const turnNodes = ${buildConversationTurnListExpression()};
     const hasTurns = turnNodes.length > 0;
     const resolveTurnIndex = (node) => {
-      const idx = turnNodes.findIndex((turn) => turn === node || turn.contains?.(node));
-      return idx >= 0 ? idx : null;
+      // Current ChatGPT DOM can return nested outer/inner turn containers.
+      // The last containing node is the specific turn; the first is a wrapper
+      // that also contains the user and falsely predates the submit baseline.
+      for (let idx = turnNodes.length - 1; idx >= 0; idx -= 1) {
+        const turn = turnNodes[idx];
+        if (turn === node || turn.contains?.(node)) return idx;
+      }
+      return null;
     };
     const normalize = (value) => String(value || '').toLowerCase().replace(/\\s+/g, ' ').trim();
     const collectLastUser = (scope) => {
@@ -1523,6 +1542,9 @@ function buildCopyExpression(meta: { messageId?: string | null; turnId?: string 
       const ASSISTANT_SELECTOR = '${ASSISTANT_ROLE_SELECTOR}';
       const isAssistantTurn = (node) => {
         if (!(node instanceof HTMLElement)) return false;
+        const searchKey = (node.getAttribute('data-content-search-unit-key') || node.getAttribute('data-chatgpt-search-unit-key') || '').toLowerCase();
+        if (searchKey.endsWith(':user')) return false;
+        if (searchKey.endsWith(':assistant')) return true;
         const turnAttr = (node.getAttribute('data-turn') || node.dataset?.turn || '').toLowerCase();
         if (turnAttr === 'assistant') return true;
         const role = (node.getAttribute('data-message-author-role') || node.dataset?.messageAuthorRole || '').toLowerCase();
