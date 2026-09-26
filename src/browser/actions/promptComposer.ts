@@ -411,6 +411,8 @@ async function waitForDomReady(
 
 export function buildChatListRateLimitExpressionForTest(): string {
   return `(() => {
+    // A resumed conversation may still be usable while the unrelated sidebar list is limited.
+    if (/\\/c\\/[^/]+/.test(location.pathname || '')) return false;
     const chatListUnavailable = Array.from(document.querySelectorAll('[role="status"]')).some((node) =>
       /loading chats|unable to load history|チャット.*読み込|履歴.*読み込/i.test((node.textContent || '').trim())
     );

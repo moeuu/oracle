@@ -132,6 +132,21 @@ describe("promptComposer", () => {
       { href: "https://chatgpt.com/" },
     );
     expect(failedHistoryState).toBe(true);
+    const resumedConversation = Function(
+      "document",
+      "performance",
+      "location",
+      `return ${expression};`,
+    )(
+      { querySelectorAll: () => [{ textContent: "Loading chats" }] },
+      {
+        getEntriesByType: () => [
+          { name: "https://chatgpt.com/backend-api/conversations", responseStatus: 429 },
+        ],
+      },
+      { href: "https://chatgpt.com/c/existing", pathname: "/c/existing" },
+    );
+    expect(resumedConversation).toBe(false);
     const loadedState = Function(
       "document",
       "performance",
