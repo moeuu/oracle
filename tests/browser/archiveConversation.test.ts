@@ -181,63 +181,47 @@ describe("archiveChatGptConversation", () => {
     });
   });
 
-  test.each([
-    [false, true, undefined],
-    [true, false, "archive-readback-current-still-recent"],
-  ] as const)(
-    "checks the archive after a neutral reload when the chat reappears=%s",
-    async (reappears, archived, reason) => {
-      vi.useFakeTimers();
-      try {
-        let sidebarReads = 0;
-        const runtime = {
-          evaluate: vi.fn(async ({ expression }: { expression: string }) => {
-            if (expression.includes('button[aria-label="Chat actions"]')) {
-              return { result: { value: { x: 50, y: 50 } } };
-            }
-            if (expression.includes("const roots = Array.from")) {
-              return { result: { value: { x: 60, y: 60 } } };
-            }
-            if (expression.includes("return { sidebarLinkPresent, saved: resources.some")) {
-              return { result: { value: { sidebarLinkPresent: false, saved: true } } };
-            }
-            if (expression.includes("performance.getEntriesByType('resource').filter")) {
-              return { result: { value: 0 } };
-            }
-            sidebarReads += 1;
-            return {
-              result: {
-                value: {
-                  recentCount: 5,
-                  currentPresent: reappears && sidebarReads > 1,
-                  onHome: true,
-                },
-              },
-            };
-          }),
-        };
-        const page = { bringToFront: vi.fn(), navigate: vi.fn(), reload: vi.fn() };
-        const input = { dispatchMouseEvent: vi.fn(async () => {}) };
-        const result = archiveChatGptConversation(runtime as never, vi.fn() as never, {
-          mode: "always",
-          conversationUrl: "https://chatgpt.com/c/abc",
-          input: input as never,
-          page: page as never,
-        });
-        await vi.runAllTimersAsync();
-        await expect(result).resolves.toMatchObject(reason ? { archived, reason } : { archived });
-        expect(page.navigate).toHaveBeenCalledWith({ url: "https://chatgpt.com/" });
-        expect(page.reload).toHaveBeenCalledOnce();
-      } finally {
-        vi.useRealTimers();
-      }
-    },
-  );
+  test("does not claim an archive from a successful PATCH without exact detail readback", async () => {
+    vi.useFakeTimers();
+    try {
+      const runtime = {
+        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
+          if (expression.includes('button[aria-label="Chat actions"]')) {
+            return { result: { value: { x: 50, y: 50 } } };
+          }
+          if (expression.includes("const roots = Array.from")) {
+            return { result: { value: { x: 60, y: 60 } } };
+          }
+          if (expression.includes("return { sidebarLinkPresent, saved: resources.some")) {
+            return { result: { value: { sidebarLinkPresent: false, saved: true } } };
+          }
+          return { result: { value: 0 } };
+        }),
+      };
+      const page = { bringToFront: vi.fn(), navigate: vi.fn(), reload: vi.fn() };
+      const input = { dispatchMouseEvent: vi.fn(async () => {}) };
+      const result = archiveChatGptConversation(runtime as never, vi.fn() as never, {
+        mode: "always",
+        conversationUrl: "https://chatgpt.com/c/abc",
+        input: input as never,
+        page: page as never,
+      });
+      await vi.runAllTimersAsync();
+      await expect(result).resolves.toMatchObject({
+        archived: false,
+        reason: "archive-readback-pending",
+      });
+      expect(page.navigate).toHaveBeenCalledWith({ url: "https://chatgpt.com/" });
+      expect(page.reload).toHaveBeenCalledOnce();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 
   test.each([
     [true, true, "GET", true, undefined],
     [false, false, "GET", false, "archive-readback-detail-not-archived"],
-    [true, true, "PATCH", false, "archive-readback-current-still-recent"],
+    [true, true, "PATCH", false, "archive-readback-pending"],
   ] as const)(
     "uses the authenticated detail readback when sidebar present=%s and archive state=%s via %s",
     async (sidebarPresent, detailArchived, requestMethod, expectedArchived, expectedReason) => {
@@ -333,50 +317,6 @@ describe("archiveChatGptConversation", () => {
       }
     },
   );
-
-  test("waits for the reloaded sidebar before confirming an archived chat", async () => {
-    vi.useFakeTimers();
-    try {
-      let sidebarReads = 0;
-      const runtime = {
-        evaluate: vi.fn(async ({ expression }: { expression: string }) => {
-          if (expression.includes('button[aria-label="Chat actions"]')) {
-            return { result: { value: { x: 50, y: 50 } } };
-          }
-          if (expression.includes("const roots = Array.from")) {
-            return { result: { value: { x: 60, y: 60 } } };
-          }
-          if (expression.includes("return { sidebarLinkPresent, saved: resources.some")) {
-            return { result: { value: { sidebarLinkPresent: false, saved: true } } };
-          }
-          if (expression.includes("performance.getEntriesByType('resource').filter")) {
-            return { result: { value: 0 } };
-          }
-          sidebarReads += 1;
-          return {
-            result: {
-              value: { recentCount: sidebarReads < 3 ? 0 : 5, currentPresent: false, onHome: true },
-            },
-          };
-        }),
-      };
-      const input = { dispatchMouseEvent: vi.fn(async () => {}) };
-      const page = { bringToFront: vi.fn(), navigate: vi.fn(), reload: vi.fn(async () => {}) };
-      const client = { on: vi.fn(), Network: { getResponseBody: vi.fn() } };
-      const result = archiveChatGptConversation(runtime as never, vi.fn() as never, {
-        mode: "always",
-        conversationUrl: "https://chatgpt.com/c/abc",
-        input: input as never,
-        page: page as never,
-        client: client as never,
-      });
-      await vi.runAllTimersAsync();
-      await expect(result).resolves.toMatchObject({ archived: true });
-      expect(sidebarReads).toBe(4);
-    } finally {
-      vi.useRealTimers();
-    }
-  });
 
   test("keeps the archive expression scoped to Archive actions", () => {
     const expression = buildArchiveConversationExpressionForTest();

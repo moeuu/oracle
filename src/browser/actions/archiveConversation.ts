@@ -255,87 +255,27 @@ async function archiveWithTrustedInput(
       if (!Page?.navigate || !Page?.reload) {
         return { status: "skipped", reason: "archive-readback-unavailable", conversationUrl };
       }
-      // Reloading the archived conversation itself can reopen it. Check from
-      // the neutral home page, then reload that page to reject optimistic UI
-      // removal or a transient successful PATCH that did not persist.
+      // Navigate away from the edited chat and reload before reading its
+      // authenticated detail. The Recents list can be incomplete or stale.
       const homeUrl = new URL("/", conversationUrl ?? "https://chatgpt.com").toString();
-      const confirmDetail = async (
-        fallback:
-          | { status: "archived"; conversationUrl?: string | null }
-          | { status: "skipped"; reason: string; conversationUrl?: string | null },
-      ) => {
-        const archived = await readAuthenticatedArchiveState(Client, Page, conversationUrl);
-        if (archived === true) return { status: "archived" as const, conversationUrl };
-        if (archived === false) {
-          return {
-            status: "skipped" as const,
-            reason: "archive-readback-detail-not-archived",
-            conversationUrl,
-          };
-        }
-        return fallback;
-      };
-      const readSidebarAfterHydration = async (): Promise<boolean | null> => {
-        await new Promise((resolve) => setTimeout(resolve, 4_000));
-        const sidebarDeadline = Date.now() + 30_000;
-        while (Date.now() < sidebarDeadline) {
-          const readback = await Runtime.evaluate({
-            expression: `(() => {
-            const current = new URL(${conversationLiteral} || location.href, location.href);
-            const links = Array.from(document.querySelectorAll('a[href]'));
-            const recentCount = links.filter((element) => {
-              try { return new URL(element.getAttribute('href') ?? '', location.href).pathname.startsWith('/c/'); }
-              catch { return false; }
-            }).length;
-            const currentPresent = links.some((element) => {
-              try {
-                const url = new URL(element.getAttribute('href') ?? '', location.href);
-                return url.origin === current.origin && url.pathname === current.pathname;
-              } catch { return false; }
-            });
-            return { recentCount, currentPresent, onHome: location.pathname === '/' };
-          })()`,
-            returnByValue: true,
-          }).catch(() => null);
-          const fresh = readback?.result?.value as
-            | { recentCount?: number; currentPresent?: boolean; onHome?: boolean }
-            | undefined;
-          if (fresh?.onHome && (fresh?.recentCount ?? 0) >= 1) {
-            return fresh.currentPresent === true;
-          }
-          await new Promise((resolve) => setTimeout(resolve, 300));
-        }
-        return null;
-      };
       await Page.navigate({ url: homeUrl });
-      const firstPresent = await readSidebarAfterHydration();
-      if (firstPresent === true) {
-        return confirmDetail({
-          status: "skipped",
-          reason: "archive-readback-current-still-recent",
-          conversationUrl,
-        });
-      }
-      if (firstPresent === null) {
-        return confirmDetail({
-          status: "skipped",
-          reason: "archive-readback-pending",
-          conversationUrl,
-        });
-      }
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
       await Page.reload({ ignoreCache: true });
-      const secondPresent = await readSidebarAfterHydration();
-      if (secondPresent === false) {
-        return confirmDetail({ status: "archived", conversationUrl });
+      await new Promise((resolve) => setTimeout(resolve, 4_000));
+      const archived = await readAuthenticatedArchiveState(Client, Page, conversationUrl);
+      if (archived === true) return { status: "archived", conversationUrl };
+      if (archived === false) {
+        return {
+          status: "skipped",
+          reason: "archive-readback-detail-not-archived",
+          conversationUrl,
+        };
       }
-      return confirmDetail({
+      return {
         status: "skipped",
-        reason:
-          secondPresent === true
-            ? "archive-readback-current-still-recent"
-            : "archive-readback-pending",
+        reason: "archive-readback-pending",
         conversationUrl,
-      });
+      };
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
