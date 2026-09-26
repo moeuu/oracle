@@ -181,17 +181,15 @@ describe("archiveChatGptConversation", () => {
     });
   });
 
-  test.each([["conversation", 0], ["conversations", 0], ["conversations", 4_500]] as const)(
-    "confirms a saved archive from the %s detail response after %ims with a short sidebar",
-    async (detailRoute, finishDelayMs) => {
+  test.each([
+    [false, true, undefined],
+    [true, false, "archive-readback-current-still-recent"],
+  ] as const)(
+    "checks the archive after a neutral reload when the chat reappears=%s",
+    async (reappears, archived, reason) => {
       vi.useFakeTimers();
       try {
-        const conversationUrl = "https://chatgpt.com/c/abc";
-        let onDetailResponse:
-          | ((event: { requestId: string; response: { url: string; status: number } }) => void)
-          | undefined;
-        let onDetailFinished: ((event: { requestId: string }) => void) | undefined;
-        let bodyReady = false;
+        let sidebarReads = 0;
         const runtime = {
           evaluate: vi.fn(async ({ expression }: { expression: string }) => {
             if (expression.includes('button[aria-label="Chat actions"]')) {
@@ -206,46 +204,30 @@ describe("archiveChatGptConversation", () => {
             if (expression.includes("performance.getEntriesByType('resource').filter")) {
               return { result: { value: 0 } };
             }
-            return { result: { value: { recentCount: 1, currentPresent: false } } };
+            sidebarReads += 1;
+            return {
+              result: {
+                value: {
+                  recentCount: 5,
+                  currentPresent: reappears && sidebarReads > 1,
+                  onHome: true,
+                },
+              },
+            };
           }),
         };
-        const page = {
-          bringToFront: vi.fn(),
-          reload: vi.fn(async () => {
-            onDetailResponse?.({
-              requestId: "detail-1",
-              response: { url: `https://chatgpt.com/backend-api/${detailRoute}/abc`, status: 200 },
-            });
-            setTimeout(() => {
-              bodyReady = true;
-              onDetailFinished?.({ requestId: "detail-1" });
-            }, finishDelayMs);
-          }),
-        };
-        const client = {
-          on: vi.fn((event: string, listener: typeof onDetailResponse | typeof onDetailFinished) => {
-            if (event === "Network.responseReceived") onDetailResponse = listener as typeof onDetailResponse;
-            if (event === "Network.loadingFinished") onDetailFinished = listener as typeof onDetailFinished;
-          }),
-          Network: {
-            getResponseBody: vi.fn(async () => {
-              if (!bodyReady) throw new Error("response body is not loaded yet");
-              return { body: '{"is_archived":true}' };
-            }),
-          },
-        };
+        const page = { bringToFront: vi.fn(), navigate: vi.fn(), reload: vi.fn() };
         const input = { dispatchMouseEvent: vi.fn(async () => {}) };
         const result = archiveChatGptConversation(runtime as never, vi.fn() as never, {
           mode: "always",
-          conversationUrl,
+          conversationUrl: "https://chatgpt.com/c/abc",
           input: input as never,
           page: page as never,
-          client: client as never,
         });
         await vi.runAllTimersAsync();
-        await expect(result).resolves.toMatchObject({ archived: true, conversationUrl });
+        await expect(result).resolves.toMatchObject(reason ? { archived, reason } : { archived });
+        expect(page.navigate).toHaveBeenCalledWith({ url: "https://chatgpt.com/" });
         expect(page.reload).toHaveBeenCalledOnce();
-        expect(client.Network.getResponseBody).toHaveBeenCalledWith({ requestId: "detail-1" });
       } finally {
         vi.useRealTimers();
       }
@@ -271,11 +253,15 @@ describe("archiveChatGptConversation", () => {
             return { result: { value: 0 } };
           }
           sidebarReads += 1;
-          return { result: { value: { recentCount: sidebarReads < 3 ? 0 : 5, currentPresent: false } } };
+          return {
+            result: {
+              value: { recentCount: sidebarReads < 3 ? 0 : 5, currentPresent: false, onHome: true },
+            },
+          };
         }),
       };
       const input = { dispatchMouseEvent: vi.fn(async () => {}) };
-      const page = { bringToFront: vi.fn(), reload: vi.fn(async () => {}) };
+      const page = { bringToFront: vi.fn(), navigate: vi.fn(), reload: vi.fn(async () => {}) };
       const client = { on: vi.fn(), Network: { getResponseBody: vi.fn() } };
       const result = archiveChatGptConversation(runtime as never, vi.fn() as never, {
         mode: "always",
@@ -286,7 +272,7 @@ describe("archiveChatGptConversation", () => {
       });
       await vi.runAllTimersAsync();
       await expect(result).resolves.toMatchObject({ archived: true });
-      expect(sidebarReads).toBe(3);
+      expect(sidebarReads).toBe(4);
     } finally {
       vi.useRealTimers();
     }

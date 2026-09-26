@@ -70,7 +70,6 @@ export async function archiveChatGptConversation(
     conversationUrl,
     input,
     page,
-    client,
   }: {
     mode: BrowserArchiveMode;
     conversationUrl?: string | null;
@@ -81,7 +80,7 @@ export async function archiveChatGptConversation(
 ): Promise<BrowserArchiveResult> {
   const value = (
     input?.dispatchMouseEvent
-      ? await archiveWithTrustedInput(Runtime, input, page, conversationUrl, client)
+      ? await archiveWithTrustedInput(Runtime, input, page, conversationUrl)
       : (
           await Runtime.evaluate({
             expression: buildArchiveConversationExpression(),
@@ -178,7 +177,6 @@ async function archiveWithTrustedInput(
   Input: ChromeClient["Input"],
   Page: ChromeClient["Page"] | undefined,
   conversationUrl?: string | null,
-  Client?: ChromeClient,
 ): Promise<
   | { status: "archived"; conversationUrl?: string | null }
   | { status: "skipped"; reason: string; conversationUrl?: string | null }
@@ -252,74 +250,19 @@ async function archiveWithTrustedInput(
     if (state?.saved && state.sidebarLinkPresent === false) {
       // The sidebar removes a chat optimistically. Reload before claiming the
       // backend kept the archive; a 200 PATCH alone is not durable proof.
-      if (!Page?.reload) {
+      if (!Page?.navigate || !Page?.reload) {
         return { status: "skipped", reason: "archive-readback-unavailable", conversationUrl };
       }
-      const conversationId = new URL(conversationUrl ?? "https://chatgpt.com").pathname
-        .split("/")
-        .at(-1);
-      // The current page loads the plural detail route; older Oracle readers
-      // also use the singular route. Accept either authenticated readback.
-      const detailPaths = new Set([
-        `/backend-api/conversations/${conversationId}`,
-        `/backend-api/conversation/${conversationId}`,
-      ]);
-      const detailResponses: string[] = [];
-      const finishedDetailResponses = new Set<string>();
-      const onDetailResponse = (event: {
-        requestId: string;
-        response: { url: string; status: number };
-      }) => {
-        try {
-          const url = new URL(event.response.url);
-          if (detailPaths.has(url.pathname) && event.response.status === 200) {
-            detailResponses.push(event.requestId);
-          }
-        } catch {
-          /* Ignore malformed resource URLs. */
-        }
-      };
-      const onDetailFinished = (event: { requestId: string }) => {
-        if (detailResponses.includes(event.requestId)) {
-          finishedDetailResponses.add(event.requestId);
-        }
-      };
-      Client?.on("Network.responseReceived", onDetailResponse);
-      Client?.on("Network.loadingFinished", onDetailFinished);
-      await Page.reload({ ignoreCache: true });
-      await new Promise((resolve) => setTimeout(resolve, 4_000));
-      // A responseReceived event is not a readable body yet. Give the matching
-      // loadingFinished event a bounded chance to arrive before readback.
-      const bodyDeadline = Date.now() + 2_000;
-      while (
-        detailResponses.length > 0 &&
-        finishedDetailResponses.size === 0 &&
-        Date.now() < bodyDeadline
-      ) {
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      for (const requestId of detailResponses) {
-        const body = Client
-          ? await Client.Network.getResponseBody({ requestId }).catch(() => null)
-          : null;
-        if (!body?.body) continue;
-        let detail: { is_archived?: unknown };
-        try {
-          detail = JSON.parse(body.body) as { is_archived?: unknown };
-        } catch {
-          continue;
-        }
-        if (detail.is_archived === true) {
-          return { status: "archived", conversationUrl };
-        }
-      }
-      // ChatGPT often reloads the conversation before its sidebar list has
-      // arrived. Give that list time to hydrate before treating readback as
-      // inconclusive; a missing link in an empty sidebar proves nothing.
-      const sidebarDeadline = Date.now() + 15_000;
-      while (Date.now() < sidebarDeadline) {
-        const readback = await Runtime.evaluate({
-          expression: `(() => {
+      // Reloading the archived conversation itself can reopen it. Check from
+      // the neutral home page, then reload that page to reject optimistic UI
+      // removal or a transient successful PATCH that did not persist.
+      const homeUrl = new URL("/", conversationUrl ?? "https://chatgpt.com").toString();
+      const readSidebarAfterHydration = async (): Promise<boolean | null> => {
+        await new Promise((resolve) => setTimeout(resolve, 4_000));
+        const sidebarDeadline = Date.now() + 30_000;
+        while (Date.now() < sidebarDeadline) {
+          const readback = await Runtime.evaluate({
+            expression: `(() => {
             const current = new URL(${conversationLiteral} || location.href, location.href);
             const links = Array.from(document.querySelectorAll('a[href]'));
             const recentCount = links.filter((element) => {
@@ -332,21 +275,43 @@ async function archiveWithTrustedInput(
                 return url.origin === current.origin && url.pathname === current.pathname;
               } catch { return false; }
             });
-            return { recentCount, currentPresent };
+            return { recentCount, currentPresent, onHome: location.pathname === '/' };
           })()`,
-          returnByValue: true,
-        }).catch(() => null);
-        const fresh = readback?.result?.value as
-          | { recentCount?: number; currentPresent?: boolean }
-          | undefined;
-        if ((fresh?.recentCount ?? 0) >= 3) {
-          return fresh?.currentPresent === false
-            ? { status: "archived", conversationUrl }
-            : { status: "skipped", reason: "archive-readback-current-still-recent", conversationUrl };
+            returnByValue: true,
+          }).catch(() => null);
+          const fresh = readback?.result?.value as
+            | { recentCount?: number; currentPresent?: boolean; onHome?: boolean }
+            | undefined;
+          if (fresh?.onHome && (fresh?.recentCount ?? 0) >= 1) {
+            return fresh.currentPresent === true;
+          }
+          await new Promise((resolve) => setTimeout(resolve, 300));
         }
-        await new Promise((resolve) => setTimeout(resolve, 300));
+        return null;
+      };
+      await Page.navigate({ url: homeUrl });
+      const firstPresent = await readSidebarAfterHydration();
+      if (firstPresent === true) {
+        return {
+          status: "skipped",
+          reason: "archive-readback-current-still-recent",
+          conversationUrl,
+        };
       }
-      return { status: "skipped", reason: "archive-readback-pending", conversationUrl };
+      if (firstPresent === null) {
+        return { status: "skipped", reason: "archive-readback-pending", conversationUrl };
+      }
+      await Page.reload({ ignoreCache: true });
+      const secondPresent = await readSidebarAfterHydration();
+      if (secondPresent === false) return { status: "archived", conversationUrl };
+      return {
+        status: "skipped",
+        reason:
+          secondPresent === true
+            ? "archive-readback-current-still-recent"
+            : "archive-readback-pending",
+        conversationUrl,
+      };
     }
     await new Promise((resolve) => setTimeout(resolve, 150));
   }
