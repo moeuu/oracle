@@ -255,7 +255,7 @@ export async function submitPrompt(
   }
 
   if (deps.webSearch) await activateWebSearch(runtime, input, prompt, logger);
-  await assertChatListNotRateLimited(runtime);
+  await warnIfChatListRateLimited(runtime, logger);
 
   // Install before the click: a short answer can complete while commit verification runs.
   await runtime
@@ -401,7 +401,6 @@ async function waitForDomReady(
       | { ready?: boolean; composer?: boolean; fileInput?: boolean }
       | undefined;
     if (value?.ready && value.composer) {
-      await assertChatListNotRateLimited(Runtime);
       return;
     }
     await delay(150);
@@ -428,15 +427,17 @@ export function buildChatListRateLimitExpressionForTest(): string {
   })()`;
 }
 
-async function assertChatListNotRateLimited(Runtime: ChromeClient["Runtime"]): Promise<void> {
-  const { result } = await Runtime.evaluate({
+export async function warnIfChatListRateLimited(
+  Runtime: ChromeClient["Runtime"],
+  logger: BrowserLogger,
+): Promise<void> {
+  const response = await Runtime.evaluate({
     expression: buildChatListRateLimitExpressionForTest(),
     returnByValue: true,
-  });
-  if (result?.value === true) {
-    throw new BrowserAutomationError(
-      "ChatGPT is rate-limiting its conversation list (HTTP 429); retry after the chat list loads.",
-      { stage: "submit-prompt", code: "chatgpt-conversation-list-rate-limited" },
+  }).catch(() => null);
+  if (response?.result?.value === true) {
+    logger(
+      "[browser] ChatGPT is rate-limiting its conversation list (HTTP 429); attempting the composer send anyway.",
     );
   }
 }

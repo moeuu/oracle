@@ -5,6 +5,7 @@ import {
   buildChatListRateLimitExpressionForTest,
   clearPromptComposer,
   submitPrompt,
+  warnIfChatListRateLimited,
 } from "../../src/browser/actions/promptComposer.js";
 import {
   CONVERSATION_TURN_CONTAINER_SELECTOR,
@@ -73,28 +74,17 @@ const evaluateAttachmentReady = (expectedName: string, visibleName: string): boo
 };
 
 describe("promptComposer", () => {
-  test("stops before sending when ChatGPT's conversation list is loading after HTTP 429", async () => {
+  test("warns without blocking when ChatGPT's conversation list is loading after HTTP 429", async () => {
     const runtime = {
-      evaluate: vi
-        .fn()
-        .mockResolvedValueOnce({ result: { value: { ready: true, composer: true } } })
-        .mockResolvedValueOnce({ result: { value: true } }),
+      evaluate: vi.fn().mockResolvedValue({ result: { value: true } }),
     };
-    const input = { insertText: vi.fn(), dispatchKeyEvent: vi.fn() };
+    const logger = vi.fn();
     await expect(
-      submitPrompt(
-        { runtime: runtime as never, input: input as never },
-        "do not send during a rate limit",
-        vi.fn() as never,
-      ),
-    ).rejects.toMatchObject({
-      name: "BrowserAutomationError",
-      details: {
-        stage: "submit-prompt",
-        code: "chatgpt-conversation-list-rate-limited",
-      },
-    });
-    expect(input.insertText).not.toHaveBeenCalled();
+      warnIfChatListRateLimited(runtime as never, logger as never),
+    ).resolves.toBeUndefined();
+    expect(logger).toHaveBeenCalledWith(
+      expect.stringContaining("attempting the composer send anyway"),
+    );
     const expression = buildChatListRateLimitExpressionForTest();
     const pageState = Function(
       "document",
@@ -755,7 +745,7 @@ describe("promptComposer", () => {
     });
   });
 
-  test("marks prompt submitted before commit verification finishes", async () => {
+  test("sends despite a rate-limited sidebar and marks prompt submitted", async () => {
     const onPromptSubmitted = vi.fn();
     const runtime = {
       evaluate: vi.fn(async ({ expression }: { expression: string }) => {
@@ -769,6 +759,9 @@ describe("promptComposer", () => {
           return {
             result: { value: { editorText: "hello", fallbackValue: "", activeValue: "hello" } },
           };
+        }
+        if (expression.includes("chatListUnavailable")) {
+          return { result: { value: true } };
         }
         if (expression.includes("button.scrollIntoView")) {
           return { result: { value: { status: "clicked" } } };
@@ -807,6 +800,9 @@ describe("promptComposer", () => {
 
     expect(onPromptSubmitted).toHaveBeenCalledTimes(1);
     expect(input.dispatchKeyEvent).not.toHaveBeenCalled();
+    expect(logger).toHaveBeenCalledWith(
+      expect.stringContaining("attempting the composer send anyway"),
+    );
   });
 
   test("does not send Enter while a trusted click commits after the old fallback deadline", async () => {
