@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Browser: count nested ChatGPT turn markers once, correlate keyed user turns with completed answers, and preserve existing macOS manual-login sessions while new profiles use the native Keychain.
+- Browser: wait for the hydrated ChatGPT composer, resume search-unit conversations, recognize completed answer action bars and copy their Markdown, and warn instead of blocking when only the chat list is rate-limited; thanks @Gerry9000 and @lifeofgurpreet.
 - Browser: warn when a configured Chrome executable cannot replace a running shared profile, explain how to switch safely, and share reuse handling with Project Sources; fixes #510, thanks @Sogl.
 
 ## 0.21.3 - 2026-09-24
