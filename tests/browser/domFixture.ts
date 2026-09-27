@@ -64,6 +64,17 @@ export class FakeElement {
     return this.parentElement?.closest(selector) ?? null;
   }
 
+  compareDocumentPosition(other: FakeElement): number {
+    if (other === this) return 0;
+    const a = treePath(this);
+    const b = treePath(other);
+    if (a.root !== b.root) return 1;
+    if (b.path.length > a.path.length && a.path.every((step, i) => step === b.path[i])) return 20;
+    if (a.path.length > b.path.length && b.path.every((step, i) => step === a.path[i])) return 10;
+    const i = a.path.findIndex((step, index) => step !== b.path[index]);
+    return b.path[i] > a.path[i] ? 4 : 2;
+  }
+
   querySelector(selector: string): FakeElement | null {
     return this.querySelectorAll(selector)[0] ?? null;
   }
@@ -99,6 +110,16 @@ function flattenElements(elements: FakeElement[]): FakeElement[] {
   return elements.flatMap((element) => [element, ...flattenElements(element.children)]);
 }
 
+function treePath(element: FakeElement): { root: FakeElement; path: number[] } {
+  const path: number[] = [];
+  let node = element;
+  while (node.parentElement) {
+    path.unshift(node.parentElement.children.indexOf(node));
+    node = node.parentElement;
+  }
+  return { root: node, path };
+}
+
 function matchesSelector(element: FakeElement, selector: string): boolean {
   return selector
     .split(",")
@@ -114,6 +135,11 @@ function matchesSingleSelector(element: FakeElement, selector: string): boolean 
 
   const id = normalized.match(/#([a-z0-9_-]+)/i)?.[1];
   if (id && element.getAttribute("id") !== id) return false;
+
+  const classes = (element.getAttribute("class") ?? "").split(/\s+/);
+  for (const match of normalized.replace(/\[[^\]]*\]/g, "").matchAll(/\.([a-z0-9_-]+)/gi)) {
+    if (!classes.includes(match[1])) return false;
+  }
 
   const attrPattern = /\[([^\]\s~|^$*!=]+)([*^$~]?=)?(?:"([^"]*)"|'([^']*)')?\s*(i)?\]/g;
   for (const match of normalized.matchAll(attrPattern)) {

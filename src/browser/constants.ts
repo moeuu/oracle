@@ -37,13 +37,18 @@ export const ANSWER_SELECTORS = [
 export const CONVERSATION_TURN_SELECTOR =
   'article[data-testid^="conversation-turn"], div[data-testid^="conversation-turn"], section[data-testid^="conversation-turn"], ' +
   "article[data-message-author-role], div[data-message-author-role], section[data-message-author-role], " +
-  "article[data-turn], div[data-turn], section[data-turn]";
+  "article[data-turn], div[data-turn], section[data-turn], [data-content-search-unit-key]";
 export const CONVERSATION_TURN_CONTAINER_SELECTOR =
   '[data-testid^="conversation-turn"],[data-content-search-unit-key]';
 export const ASSISTANT_ROLE_SELECTOR =
   '[data-message-author-role="assistant"], [data-turn="assistant"]';
+// Current ChatGPT groups user/assistant units in an exchange. The finished-turn
+// action bar is beside the assistant unit, not inside it.
+export const CONVERSATION_UNIT_SELECTOR = "[data-content-search-unit-key]";
+export const CONVERSATION_EXCHANGE_SELECTOR = "[data-content-search-turn-key]";
 export const CLOUDFLARE_SCRIPT_SELECTOR = 'script[src*="/challenge-platform/"]';
 export const CLOUDFLARE_TITLE = "just a moment";
+export const PRE_HYDRATION_PROMPT_SELECTOR = "#pending-home-input";
 export const PROMPT_PRIMARY_SELECTOR = "#prompt-textarea";
 export const PROMPT_FALLBACK_SELECTOR = 'textarea[name="prompt-textarea"]';
 export const FILE_INPUT_SELECTORS = [
@@ -95,6 +100,7 @@ export const MODEL_BUTTON_SELECTOR =
   '[data-testid="model-switcher-dropdown-button"], button.__composer-pill[aria-haspopup="menu"]';
 export const COMPOSER_MODEL_SIGNAL_SELECTOR = '[data-testid="composer-footer-actions"]';
 export const COPY_BUTTON_SELECTOR = 'button[data-testid="copy-turn-action-button"]';
+export const ACTION_BAR_COPY_BUTTON_SELECTOR = 'button[aria-label="Copy"]';
 // Action buttons that only appear once a turn has finished rendering.
 export const DEEP_RESEARCH_PLUS_BUTTON = '[data-testid="composer-plus-btn"]';
 export const DEEP_RESEARCH_DROPDOWN_ITEM_TEXT = "Deep research";

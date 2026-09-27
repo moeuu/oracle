@@ -1,11 +1,12 @@
 import { createContext, Script } from "node:vm";
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import {
   advanceCompletionAnnouncementGate,
   buildActiveThinkingStatusPredicateJsForTest,
   buildAnswerNowPlaceholderPredicateJs,
   buildAssistantSnapshotExpressionForTest,
   buildCompletionVisibilityExpressionForTest,
+  buildCopyExpressionForTest,
   buildMarkdownFallbackExtractorForTest,
   buildResponseObserverExpressionForTest,
   buildStopButtonVisibilityExpressionForTest,
@@ -22,6 +23,7 @@ import {
   buildThinkingActivityDetailsPredicateJsForTest,
 } from "../../src/browser/actions/thinkingStatus.js";
 import { STOP_BUTTON_SELECTORS } from "../../src/browser/constants.js";
+import { FakeDocument, FakeElement } from "./domFixture.js";
 
 // Completed-summary shapes the veto must treat as NOT active: bare, heading-prefixed
 // (the GPT-5.6 DOM renders "Reasoning Thought for 12s"), worded non-numeric durations,
@@ -361,6 +363,153 @@ describe("completion action correlation", () => {
       text: "Completed answer",
       turnIndex: 1,
       completionVisible: false,
+    });
+  });
+});
+
+describe("current ChatGPT search-unit action bars", () => {
+  class FakeButton extends FakeElement {
+    constructor(
+      label: string,
+      private readonly copiedText?: string,
+      attributes: Record<string, string> = {},
+    ) {
+      super("button", { "aria-label": label, ...attributes });
+    }
+    addEventListener() {}
+    removeEventListener() {}
+    scrollIntoView() {}
+    dispatchEvent(event: {
+      type: string;
+      view: { navigator: { clipboard: { writeText(text: string): Promise<void> } } };
+    }) {
+      if (event.type === "click" && this.copiedText !== undefined) {
+        void event.view.navigator.clipboard.writeText(this.copiedText);
+      }
+      return true;
+    }
+  }
+
+  function exchange(index: number, answer: string, finished: boolean): FakeElement {
+    const user = new FakeElement("div", {
+      "data-content-search-unit-key": `fallback-turn-${index}:0:user`,
+    });
+    const assistant = new FakeElement(
+      "div",
+      { "data-content-search-unit-key": `fallback-turn-${index}:2:assistant` },
+      [
+        new FakeElement("div", { class: "MarkdownRoot" }, [
+          new FakeElement("p", {}, [], answer),
+          new FakeButton("Copy", "code block only"),
+        ]),
+      ],
+    );
+    const actions = new FakeElement("div", { class: "turn-action-controls" }, [
+      new FakeButton("Copy", `## ${answer}`),
+      new FakeButton("Share"),
+    ]);
+    return new FakeElement("div", { "data-content-search-turn-key": `fallback-turn-${index}` }, [
+      user,
+      assistant,
+      ...(finished ? [actions] : []),
+    ]);
+  }
+
+  const page = (...turns: FakeElement[]) =>
+    new FakeDocument([
+      new FakeElement("main", {}, [
+        new FakeElement("div", { "data-testid": "app-shell-header" }, [new FakeButton("Share")]),
+        ...turns,
+      ]),
+    ]);
+
+  const completion = (document: FakeDocument, minTurnIndex: number) =>
+    new Script(buildCompletionVisibilityExpressionForTest({}, minTurnIndex)).runInContext(
+      createContext({ Array, Boolean, String, HTMLElement: FakeElement, document }),
+    );
+
+  async function copyMarkdown(document: FakeDocument): Promise<unknown> {
+    vi.useFakeTimers();
+    try {
+      const navigator = {
+        clipboard: { writeText: async (_text: string) => {}, write: async () => {} },
+      };
+      const context = createContext({
+        Array,
+        Boolean,
+        Date,
+        Number,
+        Promise,
+        String,
+        setTimeout,
+        clearTimeout,
+        setInterval,
+        clearInterval,
+        HTMLElement: FakeElement,
+        EventTarget: FakeElement,
+        MouseEvent: class {
+          readonly view: unknown;
+          constructor(
+            readonly type: string,
+            init: { view?: unknown },
+          ) {
+            this.view = init.view;
+          }
+        },
+        navigator,
+        window: { navigator },
+        document,
+      });
+      const result = new Script(buildCopyExpressionForTest({})).runInContext(context);
+      await vi.advanceTimersByTimeAsync(11_000);
+      return await result;
+    } finally {
+      vi.useRealTimers();
+    }
+  }
+
+  test("proves completion only from the current assistant's finished action bar", () => {
+    expect(completion(page(exchange(0, "Finished answer", true)), 0)).toBe(true);
+    expect(completion(page(exchange(0, "Streaming answer", false)), 0)).toBe(false);
+    expect(
+      completion(page(exchange(0, "Old answer", true), exchange(1, "New answer", false)), 2),
+    ).toBe(false);
+    expect(
+      completion(page(exchange(0, "Old answer", true), exchange(1, "New answer", true)), 2),
+    ).toBe(true);
+  });
+
+  test("copies markdown from the current assistant action bar, not a code block", async () => {
+    await expect(copyMarkdown(page(exchange(0, "Finished answer", true)))).resolves.toMatchObject({
+      success: true,
+      markdown: "## Finished answer",
+    });
+  });
+
+  test("does not copy an earlier answer when the new assistant has no action bar", async () => {
+    await expect(
+      copyMarkdown(page(exchange(0, "Old answer", true), exchange(1, "New answer", false))),
+    ).resolves.toMatchObject({ success: false, status: "missing-button" });
+  });
+
+  test("keeps older role/testid completion and copy controls working", async () => {
+    const legacyTurn = new FakeElement(
+      "article",
+      { "data-testid": "conversation-turn-2", "data-turn": "assistant" },
+      [
+        new FakeElement("div", { "data-message-author-role": "assistant" }, [
+          new FakeElement("div", { class: "markdown" }, [], "Legacy answer"),
+        ]),
+        new FakeButton("Copy", "Legacy **answer**", {
+          "data-testid": "copy-turn-action-button",
+        }),
+      ],
+    );
+    const document = page(legacyTurn);
+    expect(completion(document, 0)).toBe(true);
+    await expect(copyMarkdown(document)).resolves.toMatchObject({
+      success: true,
+      markdown: "Legacy **answer**",
     });
   });
 });

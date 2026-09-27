@@ -4,6 +4,7 @@ import {
   CLOUDFLARE_TITLE,
   CONVERSATION_TURN_SELECTOR,
   INPUT_SELECTORS,
+  PRE_HYDRATION_PROMPT_SELECTOR,
 } from "../constants.js";
 import { delay } from "../utils.js";
 import { logDomFailure } from "../domDebug.js";
@@ -780,10 +781,12 @@ async function waitForPrompt(
     const { result } = await Runtime.evaluate({
       expression: `(() => {
         const selectors = ${JSON.stringify(INPUT_SELECTORS)};
+        const placeholder = ${JSON.stringify(PRE_HYDRATION_PROMPT_SELECTOR)};
         for (const selector of selectors) {
-          const node = document.querySelector(selector);
-          if (node && !node.hasAttribute('disabled')) {
-            return true;
+          for (const node of document.querySelectorAll(selector)) {
+            if (!node.hasAttribute('disabled') && !node.matches(placeholder)) {
+              return true;
+            }
           }
         }
         return false;

@@ -1,8 +1,11 @@
 import type { ChromeClient, BrowserLogger } from "../types.js";
 import {
+  ACTION_BAR_COPY_BUTTON_SELECTOR,
   ANSWER_SELECTORS,
   ASSISTANT_ROLE_SELECTOR,
+  CONVERSATION_EXCHANGE_SELECTOR,
   CONVERSATION_TURN_SELECTOR,
+  CONVERSATION_UNIT_SELECTOR,
   COPY_BUTTON_SELECTOR,
   FINISHED_ACTIONS_SELECTOR,
   STOP_BUTTON_SELECTORS,
@@ -826,6 +829,24 @@ function buildStopButtonVisibilityPredicateJs(fnName: string): string {
 
 export const buildStopButtonVisibilityExpressionForTest = buildStopButtonVisibilityExpression;
 
+// Legacy controls live inside the assistant turn. Current search-unit markup
+// puts the finished-turn bar after the assistant unit in the same exchange.
+function buildTurnActionLocatorJs(fnName: string): string {
+  const unitLiteral = JSON.stringify(CONVERSATION_UNIT_SELECTOR);
+  const exchangeLiteral = JSON.stringify(CONVERSATION_EXCHANGE_SELECTOR);
+  return `const ${fnName} = (turn, inTurnSelector, besideSelector) => {
+    const inside = turn.querySelector(inTurnSelector);
+    if (inside) return inside;
+    if (!turn.matches?.(${unitLiteral})) return null;
+    const exchange = turn.closest?.(${exchangeLiteral});
+    if (!exchange) return null;
+    return Array.from(exchange.querySelectorAll(besideSelector)).find(
+      (control) =>
+        !control.closest(${unitLiteral}) && Boolean(turn.compareDocumentPosition(control) & 4),
+    ) ?? null;
+  };`;
+}
+
 function buildCompletionVisibilityExpression(
   meta: { turnId?: string | null; messageId?: string | null },
   minTurnIndex?: number,
@@ -857,6 +878,7 @@ function buildCompletionVisibilityExpression(
       if (testId.includes('assistant')) return true;
       return Boolean(node.querySelector(ASSISTANT_SELECTOR) || node.querySelector('[data-testid*="assistant"]'));
     };
+    ${buildTurnActionLocatorJs("findTurnAction")}
 
     const turns = ${buildConversationTurnListExpression()};
     let lastAssistantTurn = null;
@@ -888,7 +910,8 @@ function buildCompletionVisibilityExpression(
     }
 
     if (${allowPageStatus}) return true;
-    if (lastAssistantTurn.querySelector('${FINISHED_ACTIONS_SELECTOR}')) return true;
+    const finished = ${JSON.stringify(FINISHED_ACTIONS_SELECTOR)};
+    if (findTurnAction(lastAssistantTurn, finished, finished)) return true;
     const markdowns = lastAssistantTurn.querySelectorAll('.markdown');
     return Array.from(markdowns).some((node) => (node.textContent || '').trim() === 'Done');
   })()`;
@@ -1087,6 +1110,7 @@ function buildResponseObserverExpression(
     const SELECTORS = ${selectorsLiteral};
     const STOP_SELECTOR = ${JSON.stringify(STOP_CONTROL_SELECTOR)};
     const FINISHED_SELECTOR = '${FINISHED_ACTIONS_SELECTOR}';
+    ${buildTurnActionLocatorJs("findTurnAction")}
     const ASSISTANT_SELECTOR = ${assistantLiteral};
     const EXPECTED_CONVERSATION_ID = ${expectedConversationLiteral};
     // Learned: settling avoids capturing mid-stream HTML; keep short.
@@ -1216,7 +1240,7 @@ function buildResponseObserverExpression(
       }
       if (!lastAssistantTurn) return false;
       // Check for action buttons in this specific turn
-      if (lastAssistantTurn.querySelector(FINISHED_SELECTOR)) return true;
+      if (findTurnAction(lastAssistantTurn, FINISHED_SELECTOR, FINISHED_SELECTOR)) return true;
       // Check for "Done" text in this turn's markdown
       const markdowns = lastAssistantTurn.querySelectorAll('.markdown');
       return Array.from(markdowns).some((n) => (n.textContent || '').trim() === 'Done');
@@ -1620,7 +1644,15 @@ function buildCopyExpression(meta: { messageId?: string | null; turnId?: string 
         if (testId.includes('assistant')) return true;
         return Boolean(node.querySelector(ASSISTANT_SELECTOR) || node.querySelector('[data-testid*="assistant"]'));
       };
+      ${buildTurnActionLocatorJs("findTurnAction")}
       const turns = ${buildConversationTurnListExpression()};
+      const lastAssistantTurn = [...turns].reverse().find((turn) => isAssistantTurn(turn));
+      const actionBarButton = lastAssistantTurn
+        ? findTurnAction(lastAssistantTurn, BUTTON_SELECTOR, ${JSON.stringify(ACTION_BAR_COPY_BUTTON_SELECTOR)})
+        : null;
+      if (actionBarButton) return actionBarButton;
+      // Never copy an earlier exchange while the current search unit is still streaming.
+      if (lastAssistantTurn?.matches?.(${JSON.stringify(CONVERSATION_UNIT_SELECTOR)})) return null;
       for (let i = turns.length - 1; i >= 0; i -= 1) {
         const turn = turns[i];
         if (!isAssistantTurn(turn)) continue;
